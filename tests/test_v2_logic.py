@@ -4,9 +4,10 @@ import sys
 # Set the project root to sys.path
 sys.path.insert(0, os.getcwd())
 
-from src.adapter.onnx_classifier import OnnxIntentClassifier
-from src.encoder.onnx_model import OnnxEmbeddingEncoder
-from src.executor.engine import AgentEngine
+from deterministic_ai_agent.adapter.onnx_classifier import OnnxIntentClassifier
+from deterministic_ai_agent.encoder.onnx_model import OnnxEmbeddingEncoder
+from deterministic_ai_agent.executor.engine import AgentEngine
+from deterministic_ai_agent.executor.registry import IntentID
 
 
 def test_v2():
@@ -52,7 +53,7 @@ def test_v2():
         status = "EXECUTED" if "success" in result and result.get("success") else "REFUSED"
         reason = result.get("reason", "N/A")
 
-        intent_name = ["DIAGNOSTICS", "INVENTORY", "LOG_EVENT"][action_id]
+        intent_name = IntentID(action_id).name
 
         output = (
             f"{query[:58]:<60} | {intent_name:<12} | "

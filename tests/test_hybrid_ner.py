@@ -1,7 +1,7 @@
 import pytest
 
-from src.encoder.model import EmbeddingEncoder
-from src.ner.extractor import NERExtractor
+from deterministic_ai_agent.encoder.model import EmbeddingEncoder
+from deterministic_ai_agent.ner.extractor import NERExtractor
 
 
 @pytest.fixture(scope="module")

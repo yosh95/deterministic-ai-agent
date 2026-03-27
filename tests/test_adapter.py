@@ -2,7 +2,7 @@ import tempfile
 
 import torch
 
-from src.adapter.classifier import IntentAdapter
+from deterministic_ai_agent.adapter.classifier import IntentAdapter
 
 INPUT_DIM = 384
 NUM_CLASSES = 5

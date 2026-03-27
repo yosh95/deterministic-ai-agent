@@ -1,6 +1,6 @@
 import unittest
 
-from src.ner.extractor import NERExtractor
+from deterministic_ai_agent.ner.extractor import NERExtractor
 
 
 class TestNERHardened(unittest.TestCase):

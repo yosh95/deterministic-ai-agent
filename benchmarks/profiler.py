@@ -10,9 +10,9 @@ import psutil
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.adapter.classifier import IntentAdapter
-from src.encoder.model import EmbeddingEncoder
-from src.executor.engine import AgentEngine
+from deterministic_ai_agent.adapter.classifier import IntentAdapter
+from deterministic_ai_agent.encoder.model import EmbeddingEncoder
+from deterministic_ai_agent.executor.engine import AgentEngine
 
 
 def get_memory_mb() -> float:
@@ -108,6 +108,6 @@ if __name__ == "__main__":
     # Disable logging to focus on speed
     import logging
 
-    logging.getLogger("src.executor.engine").setLevel(logging.ERROR)
+    logging.getLogger("deterministic_ai_agent.executor.engine").setLevel(logging.ERROR)
 
     run_benchmark()

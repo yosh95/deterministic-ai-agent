@@ -6,9 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-from src.adapter.classifier import IntentAdapter
-from src.encoder.model import EmbeddingEncoder
-from src.executor.engine import AgentEngine, IntentID
+from deterministic_ai_agent.adapter.classifier import IntentAdapter
+from deterministic_ai_agent.encoder.model import EmbeddingEncoder
+from deterministic_ai_agent.executor.engine import AgentEngine, IntentID
 
 
 def export_models():

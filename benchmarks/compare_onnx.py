@@ -11,13 +11,14 @@ import psutil
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Current (PyTorch) versions
-from src.adapter.classifier import IntentAdapter
+from deterministic_ai_agent.adapter.classifier import IntentAdapter
 
 # ONNX (Optimized) versions
-from src.adapter.onnx_classifier import OnnxIntentClassifier
-from src.encoder.model import EmbeddingEncoder
-from src.encoder.onnx_model import OnnxEmbeddingEncoder
-from src.executor.engine import AgentEngine, IntentID
+from deterministic_ai_agent.adapter.onnx_classifier import OnnxIntentClassifier
+from deterministic_ai_agent.encoder.model import EmbeddingEncoder
+from deterministic_ai_agent.encoder.onnx_model import OnnxEmbeddingEncoder
+from deterministic_ai_agent.executor.engine import AgentEngine
+from deterministic_ai_agent.executor.registry import IntentID
 
 
 def get_memory_mb() -> float:
@@ -128,6 +129,6 @@ if __name__ == "__main__":
     # Disable engine logs
     import logging
 
-    logging.getLogger("src.executor.engine").setLevel(logging.ERROR)
+    logging.getLogger("deterministic_ai_agent.executor.engine").setLevel(logging.ERROR)
 
     run_comparison()

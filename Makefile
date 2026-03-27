@@ -19,7 +19,7 @@ check:
 
 # Type check using Mypy
 type-check:
-	mypy src
+	mypy deterministic_ai_agent
 
 # Run tests (includes Ruff format/check and Mypy because of pytest.ini_options)
 test:
@@ -30,4 +30,4 @@ all: format check type-check test
 
 # Run the sample simulation
 run-sample:
-	python -m src.executor.engine
+	python -m deterministic_ai_agent.executor.engine

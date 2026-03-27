@@ -3,18 +3,22 @@ name = "deterministic-ai-agent"
 version = "0.1.0"
 description = "SentenceTransformer-based deterministic agent skeleton"
 dependencies = [
-    "torch",
-    "sentence-transformers",
-    "scikit-learn",
     "numpy",
-    "pydantic",
-    "pandas",
-    "tqdm",
     "onnxruntime",
-    "optimum[exporters]",
+    "tokenizers",
+    "pydantic",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
+train = [
+    "torch",
+    "sentence-transformers",
+    "scikit-learn",
+    "pandas",
+    "tqdm",
+    "optimum[exporters]",
+]
 dev = [
     "pytest",
     "pytest-ruff",
@@ -36,4 +40,4 @@ strict = false
 
 [tool.pytest.ini_options]
 addopts = "--ruff --ruff-format --mypy"
-testpaths = ["src", "tests"]
+testpaths = ["deterministic_ai_agent", "tests"]

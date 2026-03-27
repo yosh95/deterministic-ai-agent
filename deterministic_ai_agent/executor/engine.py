@@ -1,18 +1,15 @@
 import json
 import logging
 from dataclasses import dataclass
-from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     import torch
     from numpy.typing import NDArray
 
-# Use local imports for NER to check if it still loads torch
-from src.ner.extractor import NERExtractor
-from tools.diagnostics import run_diagnostics
-from tools.inventory import check_inventory
+from deterministic_ai_agent.executor.registry import TOOL_REGISTRY, IntentID, ToolSpec
+from deterministic_ai_agent.ner.extractor import NERExtractor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,33 +33,8 @@ class ClassifierProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Tool registry
+# Defaults
 # ---------------------------------------------------------------------------
-
-
-class IntentID(IntEnum):
-    DIAGNOSTICS = 0
-    INVENTORY = 1
-    LOG_EVENT = 2
-
-
-@dataclass
-class ToolSpec:
-    name: str
-    fn: Callable[..., dict[str, Any]]
-    param_key: Optional[str] = None
-
-
-TOOL_REGISTRY: dict[IntentID, ToolSpec] = {
-    IntentID.DIAGNOSTICS: ToolSpec(
-        name="run_diagnostics", fn=run_diagnostics, param_key="device_id"
-    ),
-    IntentID.INVENTORY: ToolSpec(name="check_inventory", fn=check_inventory, param_key="item_name"),
-    IntentID.LOG_EVENT: ToolSpec(
-        name="log_event",
-        fn=lambda payload: {"tool": "log_event", "data": payload, "result": "Logged"},
-    ),
-}
 
 CONFIDENCE_THRESHOLD = 0.70
 OOD_THRESHOLD = 0.88
@@ -88,11 +60,13 @@ class AgentEngine:
         self,
         encoder: EncoderProtocol,
         adapter: ClassifierProtocol,
+        registry: dict[IntentID, ToolSpec] = TOOL_REGISTRY,
         confidence_threshold: float = CONFIDENCE_THRESHOLD,
         ood_threshold: float = OOD_THRESHOLD,
     ):
         self.encoder = encoder
         self.adapter = adapter
+        self.registry = registry
         self.ner = NERExtractor(encoder=self.encoder)
         self.confidence_threshold = confidence_threshold
         self.ood_threshold = ood_threshold
@@ -162,7 +136,7 @@ class AgentEngine:
             intent = IntentID(action_id)
         except ValueError:
             return {"success": False, "message": f"Unknown action ID: {action_id}"}
-        spec = TOOL_REGISTRY.get(intent)
+        spec = self.registry.get(intent)
         if spec is None:
             return {"success": False, "message": "No tool registered."}
 
