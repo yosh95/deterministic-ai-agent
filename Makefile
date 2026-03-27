@@ -1,0 +1,33 @@
+.PHONY: install install-dev format check type-check test all run-sample
+
+# Install the package normally
+install:
+	pip install .
+
+# Install with development tools (Ruff, Mypy, Pytest)
+install-dev:
+	pip install -e ".[dev]"
+
+# Formatting using Ruff
+format:
+	ruff format .
+	ruff check --select I --fix .
+
+# Linter check using Ruff
+check:
+	ruff check .
+
+# Type check using Mypy
+type-check:
+	mypy src
+
+# Run tests (includes Ruff format/check and Mypy because of pytest.ini_options)
+test:
+	PYTHONPATH=. pytest
+
+# Run all checks and tests
+all: format check type-check test
+
+# Run the sample simulation
+run-sample:
+	python -m src.executor.engine

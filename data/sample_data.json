@@ -1,0 +1,146 @@
+[
+  {
+    "id": 1,
+    "input": "Critical failure detected on production line 3. High motor temperature.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_B", "fault": "overheat"}
+  },
+  {
+    "id": 2,
+    "input": "Conveyor_A has stopped unexpectedly. Vibration sensor triggered.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Conveyor_A", "fault": "vibration"}
+  },
+  {
+    "id": 3,
+    "input": "Sensor_C reading anomaly detected. Please run full diagnostics.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Sensor_C", "fault": "calibration_drift"}
+  },
+  {
+    "id": 4,
+    "input": "Motor_B shows signs of overheating. Diagnostic check required immediately.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_B", "fault": "overheat"}
+  },
+  {
+    "id": 5,
+    "input": "Pump_01 pressure drop detected. Run equipment health check.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Pump_01", "fault": "pressure_drop"}
+  },
+  {
+    "id": 6,
+    "input": "Conveyor_A のベルト異常振動を検出。診断を実行してください。",
+    "intent_id": 0,
+    "parameters": {"device_id": "Conveyor_A", "fault": "vibration"}
+  },
+  {
+    "id": 7,
+    "input": "Motor_B 過電流アラート発生。ヘルスチェックを開始します。",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_B", "fault": "overcurrent"}
+  },
+  {
+    "id": 8,
+    "input": "Equipment health report needed for Sensor_C after calibration drift.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Sensor_C", "fault": "calibration_drift"}
+  },
+  {
+    "id": 9,
+    "input": "Requesting stock status for Motor_B before scheduled maintenance.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Motor_B"}
+  },
+  {
+    "id": 10,
+    "input": "Check inventory for Conveyor_A spare parts.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Conveyor_A"}
+  },
+  {
+    "id": 11,
+    "input": "How many Sensor_C units are available in the warehouse?",
+    "intent_id": 1,
+    "parameters": {"item_name": "Sensor_C"}
+  },
+  {
+    "id": 12,
+    "input": "Is Motor_B replacement part in stock? Maintenance team is waiting.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Motor_B"}
+  },
+  {
+    "id": 13,
+    "input": "Pump_01 の交換部品の在庫を確認してください。",
+    "intent_id": 1,
+    "parameters": {"item_name": "Pump_01"}
+  },
+  {
+    "id": 14,
+    "input": "Conveyor_A ベルトの在庫数を教えてください。",
+    "intent_id": 1,
+    "parameters": {"item_name": "Conveyor_A"}
+  },
+  {
+    "id": 15,
+    "input": "Supply check: do we have spare Sensor_C available for line 2?",
+    "intent_id": 1,
+    "parameters": {"item_name": "Sensor_C"}
+  },
+  {
+    "id": 16,
+    "input": "Inventory query for Motor_B — procurement team needs current count.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Motor_B"}
+  },
+  {
+    "id": 17,
+    "input": "Conveyor A stop request received. Normal shutdown initiated.",
+    "intent_id": 2,
+    "parameters": {"device": "Conveyor_A", "reason": "manual_stop"}
+  },
+  {
+    "id": 18,
+    "input": "Sensor XYZ reading is 85.5. Threshold exceeded. Logging event.",
+    "intent_id": 2,
+    "parameters": {"sensor": "XYZ", "value": 85.5}
+  },
+  {
+    "id": 19,
+    "input": "Routine status log: all systems nominal on line 1.",
+    "intent_id": 2,
+    "parameters": {"line_id": 1}
+  },
+  {
+    "id": 20,
+    "input": "Operator note: Motor_B restarted after cooldown. Logging for record.",
+    "intent_id": 2,
+    "parameters": {"device": "Motor_B", "reason": "restart_after_cooldown"}
+  },
+  {
+    "id": 21,
+    "input": "シフト終了レポート: ライン2 本日の稼働に異常なし。",
+    "intent_id": 2,
+    "parameters": {"line_id": 2}
+  },
+  {
+    "id": 22,
+    "input": "General system status report for Conveyor_A. Everything looks normal.",
+    "intent_id": 2,
+    "parameters": {"device": "Conveyor_A"}
+  },
+  {
+    "id": 23,
+    "input": "Event log: Pump_01 manual stop at 14:32 by operator Tanaka.",
+    "intent_id": 2,
+    "parameters": {"device": "Pump_01", "reason": "manual_stop"}
+  },
+  {
+    "id": 24,
+    "input": "Daily maintenance log entry for Sensor_C. No issues observed.",
+    "intent_id": 2,
+    "parameters": {"device": "Sensor_C"}
+  }
+]

@@ -1,0 +1,8 @@
+{
+    "init_time_sec": 7.8379745410002215,
+    "memory_usage_mb": 691.234375,
+    "total_memory_mb": 1392.89453125,
+    "avg_latency_ms": 21.176615400008814,
+    "throughput_aps": 47.2218993031145,
+    "device": "cpu"
+}

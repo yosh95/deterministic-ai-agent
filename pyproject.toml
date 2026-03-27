@@ -1,0 +1,37 @@
+[project]
+name = "deterministic-ai-agent"
+version = "0.1.0"
+description = "SentenceTransformer-based deterministic agent skeleton"
+dependencies = [
+    "torch",
+    "sentence-transformers",
+    "scikit-learn",
+    "numpy",
+    "pydantic",
+    "pandas",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-ruff",
+    "pytest-mypy",
+    "ruff",
+    "mypy",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+addopts = "--ruff --ruff-format --mypy"
+testpaths = ["src", "tests"]
