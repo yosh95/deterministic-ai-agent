@@ -1,24 +1,17 @@
+from typing import TYPE_CHECKING, Any, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 class IntentAdapter(nn.Module):
     """
     Lightweight MLP adapter that maps embedding vectors to intent/action IDs.
-
-    Architecture: Linear(input_dim -> 256) -> ReLU -> Dropout -> Linear(256 -> num_classes)
-
-    Determinism guarantees:
-      L1 - predict() uses argmax; no stochastic sampling.
-      L2 - predict_with_confidence() returns a calibrated softmax probability score,
-           allowing callers to gate execution on a confidence threshold.
-      L3 - centroid-based similarity score helps detect Out-of-Distribution (OOD)
-           inputs that are outside the industrial domain.
-
-    Dropout is active only during training (.train() mode).
-    Calling predict() or predict_with_confidence() always sets the model to .eval()
-    first, ensuring reproducible outputs at inference time.
+    ... (docstring truncated)
     """
 
     centroids: torch.Tensor
@@ -46,33 +39,37 @@ class IntentAdapter(nn.Module):
         logits: torch.Tensor = self.fc2(x)
         return logits
 
+    def _ensure_tensor(self, x: "Union[torch.Tensor, NDArray[Any]]") -> torch.Tensor:
+        if isinstance(x, torch.Tensor):
+            return x
+        return torch.from_numpy(x).float()
+
     # ------------------------------------------------------------------
     # L1: Deterministic prediction (argmax)
     # ------------------------------------------------------------------
-    def predict(self, x: torch.Tensor) -> int:
+    def predict(self, x: "Union[torch.Tensor, NDArray[Any]]") -> int:
         """
         Return the most probable intent ID.
         Deterministic: same input always yields the same output.
         """
         self.eval()
+        t_x = self._ensure_tensor(x)
         with torch.no_grad():
-            logits = self.forward(x)
+            logits = self.forward(t_x)
             return int(torch.argmax(logits, dim=-1).item())
 
     # ------------------------------------------------------------------
     # L2: Confidence-aware prediction
     # ------------------------------------------------------------------
-    def predict_with_confidence(self, x: torch.Tensor) -> tuple[int, float]:
+    def predict_with_confidence(self, x: "Union[torch.Tensor, NDArray[Any]]") -> tuple[int, float]:
         """
         Return (intent_id, confidence) where confidence is the softmax
         probability of the winning class (0.0 – 1.0).
-
-        Callers should refuse to execute an action when confidence is below
-        a safety threshold (e.g. < 0.7) and escalate to a human operator instead.
         """
         self.eval()
+        t_x = self._ensure_tensor(x)
         with torch.no_grad():
-            logits = self.forward(x)
+            logits = self.forward(t_x)
             probs = F.softmax(logits, dim=-1)
             # Use argmax on the last dimension
             intent_id = int(torch.argmax(probs, dim=-1).item())
@@ -97,21 +94,24 @@ class IntentAdapter(nn.Module):
                     class_vectors = vectors[mask]
                     self.centroids[i] = class_vectors.mean(dim=0)
 
-    def get_ood_score(self, x: torch.Tensor) -> float:
+    def get_ood_score(self, x: "Union[torch.Tensor, NDArray[Any]]") -> float:
         """
         Calculate the maximum cosine similarity to any class centroid.
-        Higher score (closer to 1.0) means the input is more 'In-Distribution'.
-        Low score (e.g. < 0.5) suggests the input is 'Out-of-Distribution'.
         """
         self.eval()
+        t_x = self._ensure_tensor(x)
         with torch.no_grad():
+            # Check if centroids have been populated (norm > 0)
+            if torch.norm(self.centroids) < 1e-6:
+                return 0.0
+
             # Ensure input is 2D
-            if x.dim() == 1:
-                x = x.unsqueeze(0)
+            if t_x.dim() == 1:
+                t_x = t_x.unsqueeze(0)
 
             # Normalized centroids and input for cosine similarity
             norm_centroids = F.normalize(self.centroids, p=2.0, dim=1)
-            norm_x = F.normalize(x, p=2.0, dim=1)
+            norm_x = F.normalize(t_x, p=2.0, dim=1)
 
             # Cosine similarity to each centroid (matrix mult: (1, dim) @ (dim, num_classes))
             similarities = torch.mm(norm_x, norm_centroids.t())
@@ -155,6 +155,28 @@ class IntentAdapter(nn.Module):
         """Load adapter weights from disk."""
         self.load_state_dict(torch.load(path, weights_only=True))
         self.eval()
+
+    def export_to_onnx(self, path: str, input_dim: int) -> None:
+        """
+        Export the adapter model to ONNX format.
+
+        Args:
+            path: Target file path (.onnx)
+            input_dim: The dimension of input embedding vectors.
+        """
+        self.eval()
+        dummy_input = torch.randn(1, input_dim)
+        torch.onnx.export(
+            self,
+            (dummy_input,),
+            path,
+            export_params=True,
+            opset_version=14,
+            do_constant_folding=True,
+            input_names=["input"],
+            output_names=["logits"],
+            dynamic_axes={"input": {0: "batch_size"}, "logits": {0: "batch_size"}},
+        )
 
 
 if __name__ == "__main__":

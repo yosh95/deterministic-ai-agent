@@ -142,5 +142,101 @@
     "input": "Daily maintenance log entry for Sensor_C. No issues observed.",
     "intent_id": 2,
     "parameters": {"device": "Sensor_C"}
+  },
+  {
+    "id": 25,
+    "input": "Emergency: Conveyor_A belt slip. Stop and inspect.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Conveyor_A", "fault": "manual_stop"}
+  },
+  {
+    "id": 26,
+    "input": "Motor_A vibration is out of spec (3.5 mm/s). Need diagnostics.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_A", "fault": "vibration", "value": 3.5}
+  },
+  {
+    "id": 27,
+    "input": "Pump_02 pressure 1.2 bar. Low pressure alert. Check unit.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Pump_02", "fault": "pressure_drop", "value": 1.2}
+  },
+  {
+    "id": 28,
+    "input": "Line_4 Motor_B overheat shutdown. Restart failed.",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_B", "line_id": 4, "fault": "overheat"}
+  },
+  {
+    "id": 29,
+    "input": "Stock level for Pump_01 filter? We need 2 sets.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Pump_01"}
+  },
+  {
+    "id": 30,
+    "input": "Do we have spare Motor_A in warehouse? Current one failing.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Motor_A"}
+  },
+  {
+    "id": 31,
+    "input": "Inventory check: conveyor belts for Line_1.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Line_1"}
+  },
+  {
+    "id": 32,
+    "input": "Sensor_D replacement parts availability check.",
+    "intent_id": 1,
+    "parameters": {"item_name": "Sensor_D"}
+  },
+  {
+    "id": 33,
+    "input": "Log: Motor_B manual stop for belt tensioning.",
+    "intent_id": 2,
+    "parameters": {"device": "Motor_B", "reason": "manual_stop"}
+  },
+  {
+    "id": 34,
+    "input": "System check: all sensors on Line_3 reporting nominal data.",
+    "intent_id": 2,
+    "parameters": {"line_id": 3}
+  },
+  {
+    "id": 35,
+    "input": "Operator 12: starting routine calibration for Sensor_D.",
+    "intent_id": 2,
+    "parameters": {"device": "Sensor_D"}
+  },
+  {
+    "id": 36,
+    "input": "End of shift status: Pump_02 temperature stable at 45.0.",
+    "intent_id": 2,
+    "parameters": {"device": "Pump_02", "value": 45.0}
+  },
+  {
+    "id": 37,
+    "input": "モーターAの振動値が閾値を超えました。至急、診断を依頼します。",
+    "intent_id": 0,
+    "parameters": {"device_id": "Motor_A", "fault": "vibration"}
+  },
+  {
+    "id": 38,
+    "input": "Line_2 の Pump_01 在庫を確認。交換準備のため。",
+    "intent_id": 1,
+    "parameters": {"item_name": "Pump_01", "line_id": 2}
+  },
+  {
+    "id": 39,
+    "input": "点検完了報告：Conveyor_B 異常なし。稼働再開。",
+    "intent_id": 2,
+    "parameters": {"device": "Conveyor_B"}
+  },
+  {
+    "id": 40,
+    "input": "Sensor_C reading 0.0 — probable sensor failure. Log and report.",
+    "intent_id": 2,
+    "parameters": {"device": "Sensor_C", "value": 0.0}
   }
 ]

@@ -1,11 +1,13 @@
 # Performance & Environment Report: Deterministic AI Agent
 
 ## 1. Executive Summary
-本プロジェクトでは、OT（運用技術）およびエアギャップ環境に最適化された「決定論的AIエージェント」の開発に成功した。ハルシネーションを物理的に排除し、以下の3層の安全ガード（L1/L2/L3）を実装している。
+本プロジェクトでは、OT（運用技術）環境に最適化された「ハイブリッドONNXシステム」の開発に成功した。
+学習にはPyTorchの柔軟性を活かし、推論にはONNX Runtime + Numpyを用いることで、**「Zero-Torch Inference」**（推論時にPyTorchをロードしない構成）を実現。メモリ消費の大幅な削減と、3倍以上の高速化を達成した。
 
-- **L1 (Determinism):** 同一入力に対し、常に同一アクションを保証。
-- **L2 (Confidence Gate):** ソフトマックス確率（閾値0.70）による曖昧な指示の拒絶。
-- **L3 (OOD Detection):** 埋め込み空間の重心距離（閾値0.88）によるドメイン外入力の排除。
+### 三層防御モデル (Triple-Guard Model)
+- **L1 (Determinism):** `argmax` による決定論的アクション選択。
+- **L2 (Confidence Gate):** ソフトマックス閾値（デフォルト: 0.70）による曖昧な指示の拒絶。
+- **L3 (OOD Detection):** 重心ベース余弦類似度（デフォルト: 0.88）によるドメイン外入力（雑談等）の排除。
 
 ## 2. Infrastructure & Hardware Environment
 本ベンチマークは、Windows 11上のWSL2環境で測定された。
@@ -16,42 +18,40 @@
 | **システムモデル** | Dell Inspiron 14 5445 |
 | **Host OS** | Microsoft Windows 11 Home (Build 26200) |
 | **プロセッサ** | AMD Ryzen 5 8540U (6 Cores, 12 Logical Processors) @ 3201 Mhz |
-| **物理メモリ (RAM)** | 16.0 GB (利用可能: 15.3 GB) |
-| **仮想化** | 実行中 (Hyper-V 有効 / 仮想化ベースのセキュリティ動作中) |
+| **物理メモリ (RAM)** | 16.0 GB |
 
 ### Execution Environment (Linux/WSL2)
 | 項目 | 詳細 |
 | :--- | :--- |
 | **Execution OS** | **Ubuntu 24.04 LTS (WSL2)** |
 | **Python Version** | 3.12.3 |
-| **PyTorch Device** | **CPU** (AMD Ryzen 5 8540U) |
+| **Runtime Backend** | **ONNX Runtime (CPU)** + **Numpy** |
 
-## 3. Performance Metrics (Phase 5 Benchmarks)
-`benchmarks/profiler.py` を用いた実測値（50回の試行平均）。
+## 3. Verified Performance Gains (PyTorch vs ONNX)
+`benchmarks/profiler.py` および `benchmarks/v2_perf_comparison.py` による実測値。
 
-| 指標 | 測定結果 | 備考 |
-| :--- | :--- | :--- |
-| **平均推論レイテンシ** | **21.18 ms** | 入力からアクション決定までの全行程 |
-| **推定スループット** | **47.22 actions/sec** | 1秒間あたりの処理可能件数 |
-| **メモリ使用量 (純増)** | **691.23 MB** | モデルロードによる占有量 |
-| **総プロセスメモリ** | **1,392.89 MB** | 実行時の最大RSS |
-| **コールドスタート時間** | **7.84 sec** | 初期化から推論準備完了まで |
+| メトリクス | PyTorch (Baseline) | **ONNX (Measured)** | 改善率 |
+| :--- | :--- | :--- | :--- |
+| **コールドスタート時間** | 9.29s | **2.87s** | **3.2倍 高速** |
+| **平均推論レイテンシ** | 25.36ms | **8.08ms** | **3.1倍 高速** |
+| **推定スループット** | ~39 ops/sec | **~123 ops/sec** | **3.1倍 向上** |
+| **依存ライブラリ** | 重厚 (PyTorch 700MB+) | **軽量 (Numpy/ORT)** | **RAM占有極小** |
 
 ## 4. Safety Gate Verification (L2/L3 Results)
-未知の入力に対するエージェントの挙動テスト結果。
+OT特化データセット（500サンプル）によるドメイン適応後の挙動。
 
 | 入力内容 | 分類 | OOD Score (L3) | 判定 | 理由 |
 | :--- | :--- | :---: | :---: | :--- |
-| `Warning: Motor_B temperature...` | 未知の異常報告 | 0.92 | **拒絶** | 低信頼度 (L2) |
-| `What is the weather in Tokyo?` | ドメイン外 (OOD) | 0.80 | **拒絶** | OOD検出 (L3) |
-| `Tell me a joke about robots.` | ドメイン外 (OOD) | 0.85 | **拒絶** | OOD検出 (L3) |
-| `How do I bake a cake?` | ドメイン外 (OOD) | 0.79 | **拒絶** | OOD検出 (L3) |
+| `Conveyor_A vibration detected.` | 産業ドメイン | 0.98 | **実行** | 高信頼度 & In-Domain |
+| `Status of Motor_B?` | 産業ドメイン | 0.96 | **実行** | 高信頼度 & In-Domain |
+| `What is the meaning of life?` | ドメイン外 (OOD) | 0.42 | **拒絶** | OOD検出 (L3) |
+| `Tell me a joke.` | ドメイン外 (OOD) | 0.38 | **拒絶** | OOD検出 (L3) |
 
 ## 5. Software Quality & Compliance
-- **Typing:** `mypy --strict` 準拠（ソースコード全9ファイル）。
-- **Testing:** `unittest` 55項目すべて合格。
-- **Linter/Formatter:** `ruff` による静的解析済み。
-- **NER Hardening:** `config/devices.yaml` 連携および日付・時刻の自動除外フィルタ実装済み。
+- **Zero-Torch Inference:** 推論パスにおいて `import torch` を一切行わない。
+- **Typing:** `mypy` 準拠（ソースコード全17ファイル）。
+- **Testing:** `pytest` 98項目すべて合格（静的解析・型チェック含む）。
+- **NER Refinement:** `config/devices.yaml` 連携によるデバイスIDの正規表現抽出を実装。
 
 ---
-*Report Generated: 2026-03-27*
+*Report Updated: 2026-03-27*
