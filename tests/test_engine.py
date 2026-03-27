@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from deterministic_ai_agent.adapter.classifier import IntentAdapter
-from deterministic_ai_agent.executor.engine import CONFIDENCE_THRESHOLD, AgentEngine
+from deterministic_ai_agent.executor.engine import AgentEngine
 from deterministic_ai_agent.executor.registry import IntentID
 
 INPUT_DIM = 384
@@ -11,24 +11,28 @@ NUM_CLASSES = 3
 
 
 def _make_engine(
-    confidence: float = 0.95, action_id: int = IntentID.DIAGNOSTICS, ood_score: float = 1.0
+    confidence: float = 0.95,
+    action_id: int = IntentID.DIAGNOSTICS,
+    ood_score: float = 1.0,
+    config_path: str = "config/agent_settings.yaml",
 ) -> AgentEngine:
     """Return an AgentEngine with a mocked encoder and a stubbed adapter."""
     encoder = MagicMock()
     encoder.encode.return_value = torch.randn(INPUT_DIM)
 
     adapter = IntentAdapter(INPUT_DIM, NUM_CLASSES)
-    engine = AgentEngine(encoder, adapter, confidence_threshold=CONFIDENCE_THRESHOLD)
+    # Default config_path is config/agent_settings.yaml which we just created.
+    # If it doesn't exist, AgentEngine uses internal defaults.
+    engine = AgentEngine(encoder, adapter, config_path=config_path)
 
-    # Patch predict_with_confidence via patch.object to satisfy mypy (no method-assign).
-    # The patch is applied permanently on this instance for the test's lifetime.
+    # Patch predict_with_confidence
     patch.object(
         adapter,
         "predict_with_confidence",
         return_value=(int(action_id), confidence),
     ).start()
 
-    # Patch get_ood_score to return a high value (In-Domain) by default
+    # Patch get_ood_score
     patch.object(
         adapter,
         "get_ood_score",
