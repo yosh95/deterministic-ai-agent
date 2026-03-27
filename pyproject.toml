@@ -37,6 +37,7 @@ select = ["E", "F", "I"]
 [tool.mypy]
 ignore_missing_imports = true
 strict = false
+exclude = ["build/", "dist/", ".venv/", "venv/"]
 
 [tool.pytest.ini_options]
 addopts = "--ruff --ruff-format --mypy"

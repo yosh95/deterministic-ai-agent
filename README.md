@@ -113,6 +113,7 @@ flowchart TD
 - **生成AIを使用しない**: テキスト生成ステップがないため、ハルシネーションが構造的に発生しない。
 - **クラウド不要**: 推論はすべてローカルで完結。
 - **NERは決定論的コアの外に置く**: NERの要件は「軽量・オフライン・監査可能・失敗を明示的に返すこと」であり、抽出失敗時は `{}` を返して Guard が安全側（不実行）に倒す設計で安全性を担保する。
+- **ツールデータの外部化**: 診断や在庫などの静的データは `config/tools_data.yaml` に分離し、ロジックとデータを疎結合に保つ。
 
 ---
 
@@ -143,10 +144,10 @@ from deterministic_ai_agent.executor.engine import AgentEngine
 
 # ONNXモデルから直接起動（PyTorch不要）
 engine = AgentEngine.from_onnx(
-    encoder_model="models/onnx/encoder.onnx",
-    tokenizer_json="models/onnx/tokenizer.json",
-    adapter_model="models/onnx/adapter.onnx",
-    adapter_metadata="models/onnx/metadata.json"
+    encoder_model="models/onnx/encoder/model.onnx",
+    tokenizer_json="models/onnx/encoder/tokenizer.json",
+    adapter_model="models/onnx/production_adapter.onnx",
+    adapter_metadata="models/onnx/production_metadata.json"
 )
 
 result = engine.run_step("Conveyor_A vibration detected.")

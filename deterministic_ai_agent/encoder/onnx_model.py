@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import onnxruntime as ort
@@ -66,7 +66,7 @@ class OnnxEmbeddingEncoder:
         norm = np.linalg.norm(sentence_embedding, axis=1, keepdims=True)
         normalized_embedding = sentence_embedding / norm
 
-        return normalized_embedding.astype(np.float32)
+        return cast("NDArray[Any]", normalized_embedding.astype(np.float32))
 
     @property
     def embedding_dimension(self) -> int:

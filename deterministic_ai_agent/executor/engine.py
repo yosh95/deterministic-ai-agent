@@ -150,13 +150,17 @@ class AgentEngine:
     def run_step(self, input_data: str) -> dict[str, Any]:
         start_time = time.perf_counter()
 
+        # Initialize core variables to avoid reliance on locals() in exception block
+        action_id: int = -1
+        confidence: float = 0.0
+        ood_score: float = 0.0
+        params: dict[str, Any] = {}
+        result: dict[str, Any]
+
         try:
             vector = self.encoder.encode(input_data)
             action_id, confidence = self.adapter.predict_with_confidence(vector)
             ood_score = self.adapter.get_ood_score(vector)
-
-            params: dict[str, Any] = {}
-            result: dict[str, Any]
 
             if ood_score < self.ood_threshold:
                 result = {
@@ -181,15 +185,6 @@ class AgentEngine:
                 "reason": "internal_error",
                 "message": f"Unexpected engine error: {type(e).__name__}",
             }
-            # Ensure variables exist for the log/record below
-            if "action_id" not in locals():
-                action_id = -1
-            if "confidence" not in locals():
-                confidence = 0.0
-            if "ood_score" not in locals():
-                ood_score = 0.0
-            if "params" not in locals():
-                params = {}
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -229,17 +224,20 @@ class AgentEngine:
         texts = [r["input"] for r in records]
         labels_list = [r["intent_id"] for r in records]
 
-        vectors = torch.stack([self.encoder.encode(t) for t in texts])  # type: ignore
+        vectors = torch.stack([self.encoder.encode(t) for t in texts])
         labels = torch.tensor(labels_list, dtype=torch.long)
 
-        optimizer = torch.optim.Adam(self.adapter.parameters(), lr=learning_rate)  # type: ignore
+        # adapter is typed as ClassifierProtocol which doesn't have training methods.
+        # We cast to Any here as this method is only intended for torch-based adapters.
+        adapter_any: Any = self.adapter
+        optimizer = torch.optim.Adam(adapter_any.parameters(), lr=learning_rate)
 
         for epoch in range(1, epochs + 1):
-            loss = self.adapter.train_one_epoch(vectors, labels, optimizer)  # type: ignore
+            loss = adapter_any.train_one_epoch(vectors, labels, optimizer)
             if epoch % 10 == 0:
                 self.logger.info(f"Epoch {epoch:>3}/{epochs}  loss={loss:.6f}")
 
-        self.adapter.update_centroids(vectors, labels)  # type: ignore
+        adapter_any.update_centroids(vectors, labels)
 
     def _execute_tool(self, action_id: int, params: dict[str, Any]) -> dict[str, Any]:
         try:

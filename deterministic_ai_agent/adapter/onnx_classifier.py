@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import onnxruntime as ort
@@ -34,15 +34,15 @@ class OnnxIntentClassifier:
     def _softmax(self, x: "NDArray[Any]") -> "NDArray[Any]":
         """Compute softmax values for each sets of scores in x."""
         e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return e_x / e_x.sum(axis=1, keepdims=True)
+        return cast("NDArray[Any]", e_x / e_x.sum(axis=1, keepdims=True))
 
     def _cosine_similarity(self, a: "NDArray[Any]", b: "NDArray[Any]") -> "NDArray[Any]":
         """Calculate cosine similarity between a (batch, dim) and b (num_classes, dim)."""
-        # Normalizing vectors
-        a_norm = a / np.linalg.norm(a, axis=1, keepdims=True)
-        b_norm = b / np.linalg.norm(b, axis=1, keepdims=True)
+        # Normalizing vectors with epsilon to avoid division by zero
+        a_norm = a / np.maximum(np.linalg.norm(a, axis=1, keepdims=True), 1e-9)
+        b_norm = b / np.maximum(np.linalg.norm(b, axis=1, keepdims=True), 1e-9)
         # Dot product
-        return np.dot(a_norm, b_norm.T)
+        return cast("NDArray[Any]", np.dot(a_norm, b_norm.T))
 
     def predict_with_confidence(self, x: "NDArray[Any]") -> tuple[int, float]:
         """

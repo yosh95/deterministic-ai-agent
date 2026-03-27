@@ -96,7 +96,8 @@ def run_comparison():
         tokenizer_path=onnx_path / "encoder/tokenizer.json",
     )
     adapter_ox = OnnxIntentClassifier(
-        model_path=onnx_path / "adapter.onnx", metadata_path=onnx_path / "metadata.json"
+        model_path=onnx_path / "production_adapter.onnx",
+        metadata_path=onnx_path / "production_metadata.json",
     )
     engine_ox = AgentEngine(encoder_ox, adapter_ox)
 
