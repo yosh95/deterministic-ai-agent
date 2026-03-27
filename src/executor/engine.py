@@ -1,9 +1,9 @@
 import json
 import logging
 import typing
-from typing import Any
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -89,7 +89,7 @@ class AgentEngine:
     ):
         self.encoder = encoder
         self.adapter = adapter
-        self.ner = NERExtractor()
+        self.ner = NERExtractor(encoder=self.encoder)
         self.confidence_threshold = confidence_threshold
         self.ood_threshold = ood_threshold
         self.session_history: list[StepRecord] = []
@@ -111,9 +111,7 @@ class AgentEngine:
         ood_score = self.adapter.get_ood_score(vector)
 
         logger.info(
-            f"Action ID: {action_id} | "
-            f"Conf: {confidence:.4f} | "
-            f"OOD Score (Sim): {ood_score:.4f}"
+            f"Action ID: {action_id} | Conf: {confidence:.4f} | OOD Score (Sim): {ood_score:.4f}"
         )
 
         # Step 4: OOD Guard (L3 safety gate)
@@ -152,6 +150,11 @@ class AgentEngine:
 
         # Step 6: NER parameter extraction
         params = self.ner.extract(input_data)
+        if "extraction_method" in params:
+            method = params["extraction_method"]
+            device = params.get("device_id", "Unknown")
+            logger.info(f"NER extraction successful ({method}): {device}")
+
         logger.info(f"Extracted params: {params}")
 
         # Step 7: Tool execution

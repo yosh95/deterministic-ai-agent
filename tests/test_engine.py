@@ -14,7 +14,7 @@ def _make_engine(
 ) -> AgentEngine:
     """Return an AgentEngine with a mocked encoder and a stubbed adapter."""
     encoder = MagicMock()
-    encoder.encode.return_value = torch.randn(1, INPUT_DIM)
+    encoder.encode.return_value = torch.randn(INPUT_DIM)
 
     adapter = IntentAdapter(INPUT_DIM, NUM_CLASSES)
     engine = AgentEngine(encoder, adapter, confidence_threshold=CONFIDENCE_THRESHOLD)
