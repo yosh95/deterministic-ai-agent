@@ -25,6 +25,10 @@ type-check:
 test:
 	PYTHONPATH=. pytest
 
+# Build production-ready models (Requires [train] dependencies)
+build-models:
+	python tools/build_production_models.py
+
 # Run all checks and tests
 all: format check type-check test
 
