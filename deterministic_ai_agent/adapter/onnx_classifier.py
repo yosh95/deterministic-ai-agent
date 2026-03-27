@@ -44,16 +44,16 @@ class OnnxIntentClassifier:
         # Dot product
         return np.dot(a_norm, b_norm.T)
 
-    def predict_with_confidence(self, embedding: "NDArray[Any]") -> tuple[int, float]:
+    def predict_with_confidence(self, x: "NDArray[Any]") -> tuple[int, float]:
         """
         L1 & L2 Implementation using ONNX and Numpy.
         """
         # Ensure embedding is 2D
-        if embedding.ndim == 1:
-            embedding = embedding[np.newaxis, :]
+        if x.ndim == 1:
+            x = x[np.newaxis, :]
 
         # Step 1: Run ONNX inference
-        inputs = {self.session.get_inputs()[0].name: embedding.astype(np.float32)}
+        inputs = {self.session.get_inputs()[0].name: x.astype(np.float32)}
         logits = self.session.run(None, inputs)[0]
 
         # Step 2: Softmax & Argmax
@@ -63,19 +63,19 @@ class OnnxIntentClassifier:
 
         return intent_id, confidence
 
-    def get_ood_score(self, embedding: "NDArray[Any]") -> float:
+    def get_ood_score(self, x: "NDArray[Any]") -> float:
         """
         L3 Implementation using Numpy.
         """
-        if embedding.ndim == 1:
-            embedding = embedding[np.newaxis, :]
+        if x.ndim == 1:
+            x = x[np.newaxis, :]
 
         # Check if centroids are initialized (norm > 0)
         if np.linalg.norm(self.centroids) < 1e-6:
             return 0.0
 
         # Matrix multiplication for cosine similarity
-        similarities = self._cosine_similarity(embedding, self.centroids)
+        similarities = self._cosine_similarity(x, self.centroids)
         max_similarity = float(np.max(similarities))
 
         return max_similarity

@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import yaml  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
-    import torch
-    from numpy.typing import NDArray
+    pass
 
 from deterministic_ai_agent.executor.registry import TOOL_REGISTRY, IntentID, ToolSpec
 from deterministic_ai_agent.ner.extractor import NERExtractor
@@ -36,13 +35,15 @@ class JsonFormatter(logging.Formatter):
 
 def setup_logger(name: str, structured: bool = True, level: str = "INFO") -> logging.Logger:
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, level.upper()))
-    handler = logging.StreamHandler()
-    if structured:
-        handler.setFormatter(JsonFormatter())
-    else:
-        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    logger.addHandler(handler)
+    # Prevent adding multiple handlers if the logger is re-initialized
+    if not logger.handlers:
+        logger.setLevel(getattr(logging, level.upper()))
+        handler = logging.StreamHandler()
+        if structured:
+            handler.setFormatter(JsonFormatter())
+        else:
+            handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(handler)
     logger.propagate = False
     return logger
 
@@ -60,9 +61,9 @@ class EncoderProtocol(Protocol):
 
 
 class ClassifierProtocol(Protocol):
-    def predict_with_confidence(self, x: "torch.Tensor | NDArray[Any]") -> tuple[int, float]: ...
+    def predict_with_confidence(self, x: Any) -> tuple[int, float]: ...
 
-    def get_ood_score(self, x: "torch.Tensor | NDArray[Any]") -> float: ...
+    def get_ood_score(self, x: Any) -> float: ...
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +87,26 @@ class AgentEngine:
     Optimized for zero-torch loading in production inference.
     """
 
+    @classmethod
+    def from_onnx(
+        cls,
+        encoder_model: str | Path,
+        tokenizer_json: str | Path,
+        adapter_model: str | Path,
+        adapter_metadata: str | Path,
+        config_path: str = "config/agent_settings.yaml",
+    ) -> "AgentEngine":
+        """
+        Factory method to create an AgentEngine using ONNX models.
+        Ensures NO PyTorch is loaded for inference.
+        """
+        from deterministic_ai_agent.adapter.onnx_classifier import OnnxIntentClassifier
+        from deterministic_ai_agent.encoder.onnx_model import OnnxEmbeddingEncoder
+
+        encoder = OnnxEmbeddingEncoder(encoder_model, tokenizer_json)
+        adapter = OnnxIntentClassifier(adapter_model, adapter_metadata)
+        return cls(encoder=encoder, adapter=adapter, config_path=config_path)
+
     def __init__(
         self,
         encoder: EncoderProtocol,
@@ -98,56 +119,77 @@ class AgentEngine:
         self.registry = registry
         self.ner = NERExtractor(encoder=self.encoder)
 
-        # Load external settings
+        # Load external settings with robust fallbacks
         settings = self._load_settings(config_path)
-        self.confidence_threshold = settings["engine"]["thresholds"]["confidence"]
-        self.ood_threshold = settings["engine"]["thresholds"]["ood"]
+        engine_cfg = settings.get("engine", {})
+        thresholds = engine_cfg.get("thresholds", {})
+        logging_cfg = engine_cfg.get("logging", {})
+
+        self.confidence_threshold = thresholds.get("confidence", 0.70)
+        self.ood_threshold = thresholds.get("ood", 0.88)
 
         # Setup structured logger
         self.logger = setup_logger(
             __name__,
-            structured=settings["engine"]["logging"]["structured"],
-            level=settings["engine"]["logging"]["level"],
+            structured=logging_cfg.get("structured", True),
+            level=logging_cfg.get("level", "INFO"),
         )
         self.session_history: list[StepRecord] = []
 
     def _load_settings(self, path_str: str) -> dict[str, Any]:
         path = Path(path_str)
-        defaults = {
-            "engine": {
-                "thresholds": {"confidence": 0.70, "ood": 0.88},
-                "logging": {"structured": True, "level": "INFO"},
-            }
-        }
         if not path.exists():
-            return defaults
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f)
+                return content if isinstance(content, dict) else {}
+        except Exception:
+            return {}
 
     def run_step(self, input_data: str) -> dict[str, Any]:
         start_time = time.perf_counter()
-        vector = self.encoder.encode(input_data)
-        action_id, confidence = self.adapter.predict_with_confidence(vector)
-        ood_score = self.adapter.get_ood_score(vector)
 
-        params: dict[str, Any] = {}
-        result: dict[str, Any]
+        try:
+            vector = self.encoder.encode(input_data)
+            action_id, confidence = self.adapter.predict_with_confidence(vector)
+            ood_score = self.adapter.get_ood_score(vector)
 
-        if ood_score < self.ood_threshold:
+            params: dict[str, Any] = {}
+            result: dict[str, Any]
+
+            if ood_score < self.ood_threshold:
+                result = {
+                    "success": False,
+                    "reason": "out_of_distribution",
+                    "message": "Action refused. Input outside industrial operational domain.",
+                }
+            elif confidence < self.confidence_threshold:
+                result = {
+                    "success": False,
+                    "reason": "low_confidence",
+                    "message": "Action refused. Human operator escalation required.",
+                }
+            else:
+                params = self.ner.extract(input_data)
+                result = self._execute_tool(action_id, params)
+
+        except Exception as e:
+            self.logger.error(f"Critical error in run_step: {str(e)}", extra={"error": str(e)})
             result = {
                 "success": False,
-                "reason": "out_of_distribution",
-                "message": "Action refused. Input outside industrial operational domain.",
+                "reason": "internal_error",
+                "message": f"Unexpected engine error: {type(e).__name__}",
             }
-        elif confidence < self.confidence_threshold:
-            result = {
-                "success": False,
-                "reason": "low_confidence",
-                "message": "Action refused. Human operator escalation required.",
-            }
-        else:
-            params = self.ner.extract(input_data)
-            result = self._execute_tool(action_id, params)
+            # Ensure variables exist for the log/record below
+            if "action_id" not in locals():
+                action_id = -1
+            if "confidence" not in locals():
+                confidence = 0.0
+            if "ood_score" not in locals():
+                ood_score = 0.0
+            if "params" not in locals():
+                params = {}
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -157,9 +199,9 @@ class AgentEngine:
             extra={
                 "extra": {
                     "input": input_data,
-                    "action_id": action_id,
-                    "confidence": round(confidence, 4),
-                    "ood_score": round(ood_score, 4),
+                    "action_id": int(action_id),
+                    "confidence": round(float(confidence), 4),
+                    "ood_score": round(float(ood_score), 4),
                     "params": params,
                     "success": result.get("success", False),
                     "latency_ms": round(duration_ms, 2),
@@ -170,9 +212,9 @@ class AgentEngine:
         self.session_history.append(
             StepRecord(
                 input=input_data,
-                action_id=action_id,
-                confidence=confidence,
-                ood_score=ood_score,
+                action_id=int(action_id),
+                confidence=float(confidence),
+                ood_score=float(ood_score),
                 params=params,
                 result=result,
             )
@@ -204,23 +246,31 @@ class AgentEngine:
             intent = IntentID(action_id)
         except ValueError:
             return {"success": False, "message": f"Unknown action ID: {action_id}"}
+
         spec = self.registry.get(intent)
         if spec is None:
             return {"success": False, "message": "No tool registered."}
 
-        result: dict[str, Any]
-        if spec.param_key is None:
-            result = spec.fn(params)
-        else:
-            arg = params.get(spec.param_key)
-            if arg is None:
-                return {
-                    "success": False,
-                    "message": f"Missing required parameter: {spec.param_key}",
-                }
-            result = spec.fn(arg)
+        try:
+            result: dict[str, Any]
+            if spec.param_key is None:
+                result = spec.fn(params)
+            else:
+                arg = params.get(spec.param_key)
+                if arg is None:
+                    return {
+                        "success": False,
+                        "message": f"Missing required parameter: {spec.param_key}",
+                    }
+                result = spec.fn(arg)
 
-        # Ensure 'success' field is present
-        if "success" not in result:
-            result["success"] = True
-        return result
+            # Ensure 'success' field is present
+            if "success" not in result:
+                result["success"] = True
+            return result
+        except Exception as e:
+            self.logger.error(f"Tool execution failed: {spec.fn.__name__}", extra={"error": str(e)})
+            return {
+                "success": False,
+                "message": f"Tool execution failed: {type(e).__name__}",
+            }

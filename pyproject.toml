@@ -41,3 +41,4 @@ strict = false
 [tool.pytest.ini_options]
 addopts = "--ruff --ruff-format --mypy"
 testpaths = ["deterministic_ai_agent", "tests"]
+pythonpath = ["."]

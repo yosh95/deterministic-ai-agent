@@ -138,6 +138,21 @@ Windows 11 (WSL2) 上の AMD Ryzen 5 8540U 環境での測定結果。
 pip install numpy onnxruntime tokenizers pyyaml
 ```
 
+```python
+from deterministic_ai_agent.executor.engine import AgentEngine
+
+# ONNXモデルから直接起動（PyTorch不要）
+engine = AgentEngine.from_onnx(
+    encoder_model="models/onnx/encoder.onnx",
+    tokenizer_json="models/onnx/tokenizer.json",
+    adapter_model="models/onnx/adapter.onnx",
+    adapter_metadata="models/onnx/metadata.json"
+)
+
+result = engine.run_step("Conveyor_A vibration detected.")
+print(result)
+```
+
 ### 開発・学習環境（PyTorch を含む）
 
 ```bash
