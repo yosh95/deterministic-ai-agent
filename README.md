@@ -7,14 +7,14 @@ A high-performance, deterministic AI agent implemented in Rust using the **Candl
 - **Pure Rust Implementation**: Zero dependency on Python at runtime.
 - **Embedded Model Management**: Automatically downloads and manages models (e.g., `multilingual-e5-small`) from Hugging Face Hub using `hf-hub`.
 - **Candle Framework**: Utilizes Hugging Face's `candle` for efficient tensor operations and model inference.
-- **Deterministic Logic**: Combines neural intent classification with regex-based NER for reliable industrial log processing.
-- **Offline Capable**: Once models are cached, the agent can run in completely air-gapped environments.
+- **Deterministic Logic**: Combines neural intent classification with a hybrid (Neural + Exact Match) engine for reliable NER.
+- **Reliable OOD Detection**: Uses class centroids to reject inputs falling outside the training distribution.
 
 ## Architecture
 
 - **Encoder**: Uses BERT-based models (`multilingual-e5-small`) to generate 384-dimensional text embeddings.
-- **Classifier**: A lightweight neural network for intent classification with integrated centroid-based OOD scoring.
-- **NER Extractor**: A regex-driven engine for extracting device IDs, sensor values, and fault types.
+- **Classifier**: A lightweight neural network for intent classification with integrated centroid-based similarity scoring (higher similarity = in-distribution).
+- **NER Extractor**: A hybrid engine combining a neural token classifier and an exact-match master data matcher.
 
 ## Usage
 

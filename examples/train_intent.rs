@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
 use deterministic_ai_agent::encoder::EmbeddingEncoder;
+use deterministic_ai_agent::model::IntentClassifier;
 use deterministic_ai_agent::train::Trainer;
 use serde::Deserialize;
 use std::fs;
@@ -43,22 +44,23 @@ fn main() -> Result<()> {
     // 4. Run training
     let mut trainer = Trainer::new();
     let num_classes = 3; // intent_id: 0, 1, 2
+    let mut classifier = IntentClassifier::new(384, num_classes)?;
     let epochs = 200;
     let lr = 0.01;
 
     println!("Starting training...");
-    trainer.train_intent(&embeddings, &labels, num_classes, epochs, lr)?;
+    trainer.train_intent(&mut classifier, &embeddings, &labels, epochs, lr)?;
 
     // 5. Calculate and Save Centroids (for OOD detection)
     println!("Calculating class centroids...");
-    let centroids = trainer.get_centroids(&embeddings, &labels_list, num_classes)?;
+    let centroids = trainer.calculate_centroids(&embeddings, &labels_list, num_classes)?;
 
     // 6. Save specialized weights
     let model_dir = "models";
-    fs::create_dir_all(model_dir)?;
+    std::fs::create_dir_all(model_dir)?;
 
     let model_path = format!("{}/intent_classifier.safetensors", model_dir);
-    trainer.save_weights(&model_path)?;
+    classifier.varmap().save(&model_path)?;
 
     let centroid_path = format!("{}/centroids.safetensors", model_dir);
     let mut cmap = std::collections::HashMap::new();

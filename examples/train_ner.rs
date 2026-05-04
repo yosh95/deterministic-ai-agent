@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
 use deterministic_ai_agent::encoder::EmbeddingEncoder;
+use deterministic_ai_agent::model::NERClassifier;
 use deterministic_ai_agent::train::Trainer;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -61,7 +62,8 @@ fn main() -> Result<()> {
     for item in items {
         let hidden_states = encoder.get_hidden_states(&item.input)?; // [Seq, Dim]
         let tokens = encoder.get_tokens(&item.input)?;
-        let labels = align_labels(&tokens, &item.parameters);
+        let labels =
+            deterministic_ai_agent::ner::align_labels_with_tokens(&tokens, &item.parameters);
 
         let (seq_len, dim) = hidden_states.dims2()?;
         if seq_len > max_seq_len {
@@ -98,16 +100,22 @@ fn main() -> Result<()> {
 
     // 4. Run NER training
     let mut trainer = Trainer::new();
-    let num_labels = 3; // O, DEVICE, FAULT
+    let mut classifier = NERClassifier::new(384, 3)?; // O, DEVICE, FAULT
     let epochs = 150;
     let lr = 0.005;
 
     println!("Starting NER training...");
-    trainer.train_ner(&embeddings_tensor, &labels_tensor, num_labels, epochs, lr)?;
+    trainer.train_ner(
+        &mut classifier,
+        &embeddings_tensor,
+        &labels_tensor,
+        epochs,
+        lr,
+    )?;
 
     // 5. Save NER weights
     let save_path = "models/ner_classifier.safetensors";
-    trainer.save_weights(save_path)?;
+    classifier.varmap().save(save_path)?;
     println!("NER Training completed. Weights saved to: {}", save_path);
 
     Ok(())

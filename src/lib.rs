@@ -31,7 +31,7 @@ pub struct AgentResult {
     pub input: String,
     pub intent_id: u32,
     pub confidence: f32,
-    pub ood_score: f32,
+    pub in_dist_similarity: f32,
     pub status: String,
     pub reason: Option<String>,
     pub parameters: HashMap<String, String>,
@@ -42,7 +42,7 @@ pub struct AgentEngine {
     classifier: IntentClassifier,
     ner: ModelNER,
     confidence_threshold: f32,
-    ood_threshold: f32,
+    ood_threshold: f32, // Similarity threshold (higher is more restrictive)
 }
 
 impl AgentEngine {
@@ -77,18 +77,18 @@ impl AgentEngine {
     pub fn run_step(&self, input: &str) -> Result<AgentResult> {
         let vector = self.encoder.encode(input)?;
         let (intent_id, confidence) = self.classifier.predict_with_confidence(&vector)?;
-        let ood_score = self.classifier.get_ood_score(&vector)?;
+        let in_dist_similarity = self.classifier.get_in_dist_similarity(&vector)?;
 
         let mut status = "success".to_string();
         let mut reason = None;
         let mut params = HashMap::new();
 
-        if ood_score < self.ood_threshold {
+        if in_dist_similarity < self.ood_threshold {
             status = "rejected_ood".into();
-            reason = Some("Out of distribution".into());
+            reason = Some("Input out of distribution".into());
         } else if confidence < self.confidence_threshold {
             status = "rejected_low_confidence".into();
-            reason = Some("Low confidence score".into());
+            reason = Some("Low intent confidence".into());
         } else {
             params = self.ner.extract(input, &self.encoder)?;
         }
@@ -97,10 +97,41 @@ impl AgentEngine {
             input: input.to_string(),
             intent_id,
             confidence,
-            ood_score,
+            in_dist_similarity,
             status,
             reason,
             parameters: params,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encoder::EmbeddingEncoder;
+    use crate::model::{IntentClassifier, MasterMatcher, NERClassifier};
+
+    #[test]
+    fn test_engine_rejection_logic() -> Result<()> {
+        // Mock components (using small model for speed in real env, here we focus on logic)
+        let model_id = "sentence-transformers/all-MiniLM-L6-v2";
+        let encoder = EmbeddingEncoder::new(model_id)?;
+        let classifier = IntentClassifier::new(384, 2)?;
+        let ner = ModelNER::new(384, 0.8)?;
+
+        let mut engine = AgentEngine::new(encoder, classifier, ner, None)?;
+
+        // Setup very strict thresholds
+        engine.ood_threshold = 1.0; // Impossible similarity
+        let res = engine.run_step("test input")?;
+        assert_eq!(res.status, "rejected_ood");
+
+        // Setup very low OOD but strict confidence
+        engine.ood_threshold = 0.0;
+        engine.confidence_threshold = 1.0; // Impossible confidence
+        let res = engine.run_step("test input")?;
+        assert_eq!(res.status, "rejected_low_confidence");
+
+        Ok(())
     }
 }
