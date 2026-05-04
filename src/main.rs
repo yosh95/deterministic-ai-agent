@@ -4,58 +4,78 @@ use deterministic_ai_agent::encoder::EmbeddingEncoder;
 use deterministic_ai_agent::model::IntentClassifier;
 use deterministic_ai_agent::ner::NERExtractor;
 use deterministic_ai_agent::AgentEngine;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct TrainingSample {
+    input: String,
+    intent_id: u32,
+}
 
 fn main() -> Result<()> {
-    // 1. Initialize Encoder (Downloads from HF)
-    println!("Loading Encoder...");
-    let encoder = EmbeddingEncoder::new("sentence-transformers/all-MiniLM-L6-v2")?;
+    // 1. Initialize Encoder (Multilingual model as per README)
+    println!("Loading Multilingual Encoder...");
+    let encoder = EmbeddingEncoder::new("intfloat/multilingual-e5-small")?;
+    let dim = 384;
 
-    // 2. Initialize Classifier
-    println!("Initializing Classifier...");
-    let mut classifier = IntentClassifier::new(384, 5)?; // MiniLM l6 has 384 dim
+    // 2. Load Training Data from JSON
+    println!("Loading training data from sample_data.json...");
+    let data_content = std::fs::read_to_string("data/sample_data.json")?;
+    let samples: Vec<TrainingSample> = serde_json::from_str(&data_content)?;
+    
+    let train_texts: Vec<String> = samples.iter().map(|s| s.input.clone()).collect();
+    let train_labels_vec: Vec<u32> = samples.iter().map(|s| s.intent_id).collect();
+    let num_intents = (train_labels_vec.iter().max().unwrap_or(&0) + 1) as usize;
 
-    // 3. Prepare Dummy Training Data
-    println!("Starting training simulation...");
-    let device = Device::Cpu;
-    
-    // Label 0: Temperature problems
-    // Label 1: Vibration problems
-    let train_texts = vec![
-        "The system is overheating",
-        "High temperature detected",
-        "Sensor reports overheat",
-        "Too much vibration in the motor",
-        "Excessive shaking on line 1",
-    ];
-    let train_labels_vec = vec![0u32, 0, 0, 1, 1];
-    
+    // 3. Initialize Classifier
+    println!("Initializing Classifier for {} intents...", num_intents);
+    let mut classifier = IntentClassifier::new(dim, num_intents)?;
+
+    // 4. Encode Training Data
+    println!("Encoding training samples (this may take a moment)...");
     let embs: Vec<Tensor> = train_texts.iter()
         .map(|t| encoder.encode(t)).collect::<Result<Vec<_>>>()?;
     let train_embeddings = Tensor::stack(&embs, 0)?;
-    let train_labels = Tensor::from_vec(train_labels_vec.clone(), (5,), &device)?;
+    let train_labels = Tensor::from_vec(train_labels_vec.clone(), (samples.len(),), &Device::Cpu)?;
 
-    // 4. Training Loop
-    for epoch in 1..=50 {
-        let loss = classifier.train_one_epoch(&train_embeddings, &train_labels, 0.05)?;
-        if epoch % 10 == 0 {
-            println!("Epoch {:>2}/50, Loss: {:.6}", epoch, loss);
+    // 5. Training Loop
+    println!("Training...");
+    for epoch in 1..=100 {
+        let loss = classifier.train_one_epoch(&train_embeddings, &train_labels, 0.001)?;
+        if epoch % 20 == 0 {
+            println!("Epoch {:>3}/100, Loss: {:.6}", epoch, loss);
         }
     }
 
-    // 5. Update Centroids for OOD detection
+    // 6. Update Centroids for OOD detection
     classifier.update_centroids(&train_embeddings, &train_labels_vec)?;
 
-    // 6. Initialize Engine with trained classifier
-    println!("Loading NER...");
+    // 7. Initialize Engine
+    println!("Loading NER and Engine...");
     let ner = NERExtractor::new("config/devices.yaml")?;
-    let engine = AgentEngine::new(encoder, classifier, ner, Some("config/agent_settings.yaml"));
+    let engine = AgentEngine::new(encoder, classifier, ner, Some("config/agent_settings.yaml"))?;
 
-    // 7. Run inference
-    let test_input = "Warning: The motor on line 5 show excessive vibration";
-    println!("\nInference on: '{}'", test_input);
-    let result = engine.run_step(test_input)?;
+    // 8. Run inference
+    let test_inputs = vec![
+        "Warning: The Motor_B on line 5 show excessive vibration",
+        "Conveyor_A のベルト異常振動を検出。診断を実行してください。", // Japanese
+        "What is the weather today?", // Should be rejected as OOD
+    ];
 
-    println!("Result: {:#?}", result);
+    for input in test_inputs {
+        println!("\n--- Inference ---");
+        println!("Input: '{}'", input);
+        let result = engine.run_step(input)?;
+        println!("Result Status: {}", result.status);
+        if let Some(reason) = result.reason {
+            println!("Reason: {}", reason);
+        }
+        println!("Intent ID: {}, Confidence: {:.4}, OOD Score: {:.4}", 
+            result.intent_id, result.confidence, result.ood_score);
+        if !result.parameters.is_empty() {
+            println!("Params: {:?}", result.parameters);
+        }
+    }
 
     Ok(())
 }

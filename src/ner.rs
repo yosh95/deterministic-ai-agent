@@ -1,81 +1,97 @@
 use anyhow::Result;
-use regex::Regex;
-use serde::Deserialize;
 use std::collections::HashMap;
+use crate::model::{TokenClassifier, MasterMatcher};
+use crate::encoder::EmbeddingEncoder;
 
-#[derive(Debug, Deserialize)]
-struct DeviceConfig {
-    #[allow(dead_code)]
-    devices: Vec<String>,
-    prefixes: Vec<String>,
+pub struct ModelNER {
+    classifier: TokenClassifier,
+    matcher: MasterMatcher,
 }
 
-pub struct NERExtractor {
-    #[allow(dead_code)]
-    devices: Vec<String>,
-    device_regex: Regex,
-    sensor_regex: Regex,
-    line_regex: Regex,
-    numeric_regex: Regex,
-    fault_regex: Regex,
-}
-
-impl NERExtractor {
-    pub fn new(config_path: &str) -> Result<Self> {
-        let config_content = std::fs::read_to_string(config_path).unwrap_or_else(|_| "devices: []\nprefixes: []".into());
-        let config: DeviceConfig = serde_yaml::from_str(&config_content)?;
-
-        let mut patterns = Vec::new();
-        if !config.devices.is_empty() {
-            let escaped_devices: Vec<String> = config.devices.iter().map(|d| regex::escape(d)).collect();
-            patterns.push(format!("({})", escaped_devices.join("|")));
-        }
-        if !config.prefixes.is_empty() {
-            let escaped_prefixes: Vec<String> = config.prefixes.iter().map(|p| regex::escape(p)).collect();
-            patterns.push(format!("(({})[A-Za-z0-9_]+)", escaped_prefixes.join("|")));
-        }
-
-        let device_pattern = if patterns.is_empty() {
-            r"\b(Unknown_Device)\b".to_string()
-        } else {
-            format!(r"\b({})\b", patterns.join("|"))
-        };
-
+impl ModelNER {
+    pub fn new(input_dim: usize, threshold: f32) -> Result<Self> {
         Ok(Self {
-            devices: config.devices,
-            device_regex: Regex::new(&format!("(?i){}", device_pattern))?,
-            sensor_regex: Regex::new(r"(?i)\bsensor\s+([A-Za-z0-9_\-]+)\b")?,
-            line_regex: Regex::new(r"(?i)\b(?:line|ライン)\s*(\d+)\b")?,
-            numeric_regex: Regex::new(r"\b(\d+(?:\.\d+)?)\s*(?:°C|bar|rpm|kPa|V|A|Hz)?\b")?,
-            fault_regex: Regex::new(r"(?i)\b(overheat|overvoltage|overcurrent|vibration|calibration\s+drift|pressure\s+drop|manual\s?stop|shutdown)\b")?,
+            classifier: TokenClassifier::new(input_dim, 3)?, // O, DEVICE, FAULT
+            matcher: MasterMatcher::new(threshold),
         })
     }
 
-    pub fn extract(&self, text: &str) -> HashMap<String, String> {
-        let mut params = HashMap::new();
+    pub fn load_classifier(&mut self, path: &str) -> Result<()> {
+        self.classifier.load_weights(path)?;
+        Ok(())
+    }
 
-        if let Some(cap) = self.device_regex.captures(text) {
-            params.insert("device_id".to_string(), cap[1].to_string());
-            params.insert("extraction_method".to_string(), "regex".to_string());
+    pub fn register_device(&mut self, name: &str, encoder: &EmbeddingEncoder) -> Result<()> {
+        let vec = encoder.encode(name)?;
+        self.matcher.add_template(name, vec);
+        Ok(())
+    }
+
+    pub fn extract(&self, text: &str, encoder: &EmbeddingEncoder) -> Result<HashMap<String, String>> {
+        let hidden_states = encoder.get_hidden_states(text)?;
+        let logits = self.classifier.forward(&hidden_states)?;
+        let probs = candle_nn::ops::softmax(&logits, 1)?;
+        let labels_tensor = probs.argmax(1)?;
+        let labels: Vec<u32> = labels_tensor.to_vec1()?;
+
+        let tokenizer = encoder.get_tokenizer();
+        let tokens = tokenizer.encode(text, true).map_err(|e| anyhow::anyhow!(e))?;
+        let token_ids = tokens.get_ids();
+        let token_strings = tokens.get_tokens();
+
+        let mut results = HashMap::new();
+        let mut device_chunks = Vec::new();
+        let mut fault_chunks = Vec::new();
+
+        for (i, &label_id) in labels.iter().enumerate() {
+            if i >= token_strings.len() { break; }
+            let token_str = &token_strings[i];
+            
+            // Skip special tokens
+            if (token_str.starts_with('[') && token_str.ends_with(']')) || token_ids[i] <= 103 {
+                continue;
+            }
+
+            // High-priority Deterministic Match (RAG logic)
+            let token_vec = hidden_states.get(i)?;
+            if let Some((matched_id, _score)) = self.matcher.match_entity(&token_vec)? {
+                results.insert("device_id".to_string(), matched_id);
+            }
+
+            // Buffer based on labels for reconstruction
+            match label_id {
+                1 => device_chunks.push(token_str.clone()),
+                2 => fault_chunks.push(token_str.clone()),
+                _ => {}
+            }
         }
 
-        if let Some(cap) = self.sensor_regex.captures(text) {
-            params.insert("sensor".to_string(), cap[1].to_uppercase());
+        // Reconstruct words from sub-tokens (WordPiece restoration)
+        let reconstruct = |chunks: Vec<String>| -> String {
+            let mut result = String::new();
+            for chunk in chunks {
+                if chunk.starts_with("##") {
+                    result.push_str(&chunk[2..]);
+                } else {
+                    if !result.is_empty() {
+                        result.push(' ');
+                    }
+                    result.push_str(&chunk);
+                }
+            }
+            result
+        };
+
+        let device_name = reconstruct(device_chunks);
+        let fault_name = reconstruct(fault_chunks);
+
+        if !device_name.is_empty() {
+            results.insert("device_candidate".to_string(), device_name);
+        }
+        if !fault_name.is_empty() {
+            results.insert("fault_candidate".to_string(), fault_name);
         }
 
-        if let Some(cap) = self.line_regex.captures(text) {
-            params.insert("line_id".to_string(), cap[1].to_string());
-        }
-
-        if let Some(cap) = self.numeric_regex.captures(text) {
-            params.insert("value".to_string(), cap[1].to_string());
-        }
-
-        if let Some(cap) = self.fault_regex.captures(text) {
-            let fault = cap[1].to_lowercase().replace(' ', "_").replace('-', "_");
-            params.insert("fault".to_string(), fault);
-        }
-
-        params
+        Ok(results)
     }
 }

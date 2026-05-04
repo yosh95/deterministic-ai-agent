@@ -1,29 +1,116 @@
-use candle_core::{Result, Tensor};
+use candle_core::{Result, Tensor, DType};
 use candle_nn::{Linear, Module, VarBuilder, VarMap, Optimizer};
+use std::collections::HashMap;
 
 pub struct IntentClassifier {
-    fc: Linear,
+    fc1: Linear,
+    fc2: Linear,
     varmap: VarMap,
     centroids: Option<Tensor>,
+}
+
+pub struct TokenClassifier {
+    head: Linear,
+    varmap: VarMap,
+}
+
+impl TokenClassifier {
+    pub fn new(input_dim: usize, num_labels: usize) -> Result<Self> {
+        let varmap = VarMap::new();
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &candle_core::Device::Cpu);
+        let head = candle_nn::linear(input_dim, num_labels, vb.pp("ner_head"))?;
+        Ok(Self { head, varmap })
+    }
+
+    pub fn load_weights(&mut self, path: &str) -> Result<()> {
+        self.varmap.load(path)?;
+        Ok(())
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        self.head.forward(x)
+    }
+
+    pub fn predict(&self, x: &Tensor) -> Result<Vec<u32>> {
+        let logits = self.forward(x)?;
+        let labels = logits.argmax(1)?;
+        Ok(labels.to_vec1::<u32>()?)
+    }
+}
+
+pub struct MasterMatcher {
+    device_templates: HashMap<String, Tensor>, // Name -> Embedding
+    threshold: f32,
+}
+
+impl MasterMatcher {
+    pub fn new(threshold: f32) -> Self {
+        Self {
+            device_templates: HashMap::new(),
+            threshold,
+        }
+    }
+
+    pub fn add_template(&mut self, name: &str, embedding: Tensor) {
+        self.device_templates.insert(name.to_string(), embedding);
+    }
+
+    pub fn match_entity(&self, embedding: &Tensor) -> Result<Option<(String, f32)>> {
+        let mut best_name = None;
+        let mut max_sim = -1.0f32;
+
+        for (name, template) in &self.device_templates {
+            let sim = self.cosine_similarity(embedding, template)?;
+            if sim > max_sim && sim > self.threshold {
+                max_sim = sim;
+                best_name = Some((name.clone(), sim));
+            }
+        }
+        Ok(best_name)
+    }
+
+    fn cosine_similarity(&self, v1: &Tensor, v2: &Tensor) -> Result<f32> {
+        let dot = (v1 * v2)?.sum_all()?.to_scalar::<f32>()?;
+        let norm1 = v1.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()?;
+        let norm2 = v2.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()?;
+        Ok(dot / (norm1 * norm2 + 1e-7))
+    }
 }
 
 impl IntentClassifier {
     pub fn new(input_dim: usize, num_intents: usize) -> Result<Self> {
         let varmap = VarMap::new();
-        let vb = VarBuilder::from_varmap(&varmap, candle_core::DType::F32, &candle_core::Device::Cpu);
-        let fc = candle_nn::linear(input_dim, num_intents, vb.pp("fc"))?;
+        let vb = VarBuilder::from_varmap(&varmap, DType::F32, &candle_core::Device::Cpu);
+        let fc1 = candle_nn::linear(input_dim, 128, vb.pp("fc1"))?;
+        let fc2 = candle_nn::linear(128, num_intents, vb.pp("fc2"))?;
         Ok(Self {
-            fc,
+            fc1,
+            fc2,
             varmap,
             centroids: None,
         })
     }
 
+    /// Load trained weights from a file
+    pub fn load_weights(&mut self, path: &str) -> Result<()> {
+        self.varmap.load(path)?;
+        Ok(())
+    }
+
+    pub fn set_centroids(&mut self, centroids: Tensor) {
+        self.centroids = Some(centroids);
+    }
+
+    fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        let x = self.fc1.forward(x)?;
+        let x = x.relu()?;
+        self.fc2.forward(&x)
+    }
+
     /// Predict intent ID and confidence (max probability)
     pub fn predict_with_confidence(&self, x: &Tensor) -> Result<(u32, f32)> {
-        // x shape is [dim], need [1, dim] for linear layer
         let x_batched = x.unsqueeze(0)?;
-        let logits = self.fc.forward(&x_batched)?.squeeze(0)?;
+        let logits = self.forward(&x_batched)?.squeeze(0)?;
         let probs = candle_nn::ops::softmax(&logits, 0)?;
         
         let mut max_prob = 0.0f32;
@@ -45,7 +132,7 @@ impl IntentClassifier {
         let mut opt = candle_nn::AdamW::new_lr(self.varmap.all_vars(), learning_rate)?;
 
         // Forward
-        let logits = self.fc.forward(embeddings)?;
+        let logits = self.forward(embeddings)?;
         
         // Log-softmax and NLL Loss
         let log_sm = candle_nn::ops::log_softmax(&logits, 1)?;
@@ -59,26 +146,30 @@ impl IntentClassifier {
 
     /// Update centroids for OOD detection using training data
     pub fn update_centroids(&mut self, embeddings: &Tensor, labels: &[u32]) -> Result<()> {
-        let (_num_samples, dim) = embeddings.dims2()?;
+        let (num_samples, dim) = embeddings.dims2()?;
         let num_classes = labels.iter().max().cloned().unwrap_or(0) as usize + 1;
         
-        let mut class_sums = vec![vec![0.0f32; dim]; num_classes];
-        let mut class_counts = vec![0usize; num_classes];
-        
-        let emb_data: Vec<Vec<f32>> = embeddings.to_vec2()?;
-        for (i, label) in labels.iter().enumerate() {
-            let label = *label as usize;
-            for d in 0..dim {
-                class_sums[label][d] += emb_data[i][d];
-            }
-            class_counts[label] += 1;
-        }
-        
         let mut centroid_data = Vec::with_capacity(num_classes * dim);
-        for i in 0..num_classes {
-            let count = class_counts[i] as f32;
-            for d in 0..dim {
-                centroid_data.push(if count > 0.0 { class_sums[i][d] / count } else { 0.0 });
+        
+        for class_idx in 0..num_classes {
+            let mut class_mask = Vec::with_capacity(num_samples);
+            let mut count = 0.0f32;
+            for &l in labels {
+                if l as usize == class_idx {
+                    class_mask.push(1.0f32);
+                    count += 1.0;
+                } else {
+                    class_mask.push(0.0f32);
+                }
+            }
+            
+            if count > 0.0 {
+                let mask_tensor = Tensor::from_vec(class_mask, (1, num_samples), embeddings.device())?;
+                let class_emb_sum = mask_tensor.matmul(embeddings)?;
+                let centroid = (class_emb_sum / (count as f64))?;
+                centroid_data.extend(centroid.squeeze(0)?.to_vec1::<f32>()?);
+            } else {
+                centroid_data.extend(vec![0.0f32; dim]);
             }
         }
         
@@ -91,18 +182,18 @@ impl IntentClassifier {
     pub fn get_ood_score(&self, x: &Tensor) -> Result<f32> {
         let centroids = match &self.centroids {
             Some(c) => c,
-            None => return Ok(1.0), // Default to 1.0 (in-distribution) if no centroids
+            None => return Ok(0.0), // Safe default: not in distribution
         };
 
-        // Normalize input: x is [384], x_norm is scalar
-        let x_norm = x.sqr()?.sum_all()?.sqrt()?;
+        // Normalize input
+        let x_norm = (x.sqr()?.sum_all()?.sqrt()? + 1e-8)?;
         let x_normalized = x.broadcast_div(&x_norm)?;
 
-        // Normalize centroids: centroids is [num_classes, 384], c_norms is [num_classes]
-        let c_norms = centroids.sqr()?.sum(1)?.sqrt()?.reshape(((), 1))?;
+        // Normalize centroids
+        let c_norms = (centroids.sqr()?.sum(1)?.sqrt()?.reshape(((), 1))? + 1e-8)?;
         let c_normalized = centroids.broadcast_div(&c_norms)?;
 
-        // Matrix multiplication for cosine similarities: [num_classes, 384] * [384, 1] -> [num_classes]
+        // Max cosine similarity
         let similarities = c_normalized.matmul(&x_normalized.unsqueeze(1)?)?.squeeze(1)?;
         let max_sim = similarities.to_vec1()?.into_iter().fold(f32::MIN, f32::max);
         

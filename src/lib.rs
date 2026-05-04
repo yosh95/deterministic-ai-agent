@@ -1,13 +1,14 @@
 pub mod encoder;
 pub mod model;
 pub mod ner;
+pub mod train;
 
-use anyhow::Result;
-use serde::Deserialize;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::encoder::EmbeddingEncoder;
 use crate::model::IntentClassifier;
-use crate::ner::NERExtractor;
+use crate::ner::ModelNER;
 
 #[derive(Debug, Deserialize)]
 struct EngineConfig {
@@ -25,10 +26,21 @@ struct Thresholds {
     ood: f32,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AgentResult {
+    pub input: String,
+    pub intent_id: u32,
+    pub confidence: f32,
+    pub ood_score: f32,
+    pub status: String,
+    pub reason: Option<String>,
+    pub parameters: HashMap<String, String>,
+}
+
 pub struct AgentEngine {
     encoder: EmbeddingEncoder,
     classifier: IntentClassifier,
-    ner: NERExtractor,
+    ner: ModelNER,
     confidence_threshold: f32,
     ood_threshold: f32,
 }
@@ -37,59 +49,58 @@ impl AgentEngine {
     pub fn new(
         encoder: EmbeddingEncoder,
         classifier: IntentClassifier,
-        ner: NERExtractor,
+        ner: ModelNER,
         config_path: Option<&str>,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut confidence_threshold = 0.70;
         let mut ood_threshold = 0.88;
 
         if let Some(path) = config_path {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(config) = serde_yaml::from_str::<EngineConfig>(&content) {
-                    confidence_threshold = config.engine.thresholds.confidence;
-                    ood_threshold = config.engine.thresholds.ood;
-                }
-            }
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("Failed to read config file at {}: {}", path, e))?;
+            let config: EngineConfig = serde_yaml::from_str(&content)
+                .map_err(|e| anyhow!("Failed to parse config YAML: {}", e))?;
+            
+            confidence_threshold = config.engine.thresholds.confidence;
+            ood_threshold = config.engine.thresholds.ood;
         }
 
-        Self {
+        Ok(Self {
             encoder,
             classifier,
             ner,
             confidence_threshold,
             ood_threshold,
-        }
+        })
     }
 
-    pub fn run_step(&self, input: &str) -> Result<HashMap<String, String>> {
+    pub fn run_step(&self, input: &str) -> Result<AgentResult> {
         let vector = self.encoder.encode(input)?;
         let (intent_id, confidence) = self.classifier.predict_with_confidence(&vector)?;
         let ood_score = self.classifier.get_ood_score(&vector)?;
 
-        let mut output = HashMap::new();
-        output.insert("input".into(), input.to_string());
-        output.insert("intent_id".into(), intent_id.to_string());
-        output.insert("confidence".into(), format!("{:.4}", confidence));
-        output.insert("ood_score".into(), format!("{:.4}", ood_score));
+        let mut status = "success".to_string();
+        let mut reason = None;
+        let mut params = HashMap::new();
 
         if ood_score < self.ood_threshold {
-            output.insert("status".into(), "rejected_ood".into());
-            output.insert("reason".into(), "Out of distribution".into());
-            return Ok(output);
+            status = "rejected_ood".into();
+            reason = Some("Out of distribution".into());
+        } else if confidence < self.confidence_threshold {
+            status = "rejected_low_confidence".into();
+            reason = Some("Low confidence score".into());
+        } else {
+            params = self.ner.extract(input, &self.encoder)?;
         }
 
-        if confidence < self.confidence_threshold {
-            output.insert("status".into(), "rejected_low_confidence".into());
-            output.insert("reason".into(), "Low confidence score".into());
-            return Ok(output);
-        }
-
-        let params = self.ner.extract(input);
-        for (k, v) in params {
-            output.insert(format!("param_{}", k), v);
-        }
-        output.insert("status".into(), "success".into());
-
-        Ok(output)
+        Ok(AgentResult {
+            input: input.to_string(),
+            intent_id,
+            confidence,
+            ood_score,
+            status,
+            reason,
+            parameters: params,
+        })
     }
 }
