@@ -1,0 +1,23 @@
+[package]
+name = "deterministic-ai-agent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# core matrix operations and deep learning
+candle-core = "0.8.2"
+candle-nn = "0.8.2"
+candle-transformers = "0.8.2"
+
+# tokenization and HuggingFace integration
+tokenizers = { version = "0.21.0", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4.1", default-features = false, features = ["rustls-tls", "ureq"] }
+
+# utility
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# regex for NER
+regex = "1.10"
