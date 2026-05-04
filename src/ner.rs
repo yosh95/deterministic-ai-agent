@@ -34,19 +34,25 @@ impl ModelNER {
         text: &str,
         encoder: &EmbeddingEncoder,
     ) -> Result<HashMap<String, String>> {
-        let prefixed = format!("query: {}", text);
-        let (hidden_states, _) = encoder.get_hidden_states_with_mask(&prefixed)?;
+        let (hidden_states, _) = encoder.get_hidden_states_with_mask(text)?;
         let logits = self.classifier.forward(&hidden_states)?;
         let probs = candle_nn::ops::softmax(&logits, 1)?;
         let labels_tensor = probs.argmax(1)?;
         let labels: Vec<u32> = labels_tensor.to_vec1()?;
 
         let tokenizer = encoder.get_tokenizer();
-        let tokens = tokenizer
-            .encode(text, true)
+        let _tokens = tokenizer
+            .encode(text, true) // Must NOT add prefix here if we use original tokens for strings
             .map_err(|e| anyhow::anyhow!(e))?;
-        let token_ids = tokens.get_ids();
-        let token_strings = tokens.get_tokens();
+        
+        // Use tokens encoded with prefix for hidden_state alignment
+        let prefixed_text = format!("query: {}", text);
+        let tokens_prefixed = tokenizer
+            .encode(prefixed_text, true)
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        let token_strings = tokens_prefixed.get_tokens();
+        let special_mask = tokens_prefixed.get_special_tokens_mask();
 
         let mut results = HashMap::new();
         let mut device_chunks = Vec::new();
@@ -58,8 +64,8 @@ impl ModelNER {
             }
             let token_str = &token_strings[i];
 
-            // Skip special tokens
-            if (token_str.starts_with('[') && token_str.ends_with(']')) || token_ids[i] <= 103 {
+            // Use the professional tokenizer special mask instead of hardcoded IDs
+            if special_mask[i] == 1 {
                 continue;
             }
 
@@ -143,8 +149,9 @@ pub fn align_labels_with_tokens(
             if token_text.is_empty() {
                 continue;
             }
-            // Exact full token match or WordPiece part match
+            // Exact full token match or WordPiece part match (avoid single chars and non-matches)
             if val_str.contains(token_text) && token_text.len() > 1 {
+                // Check if it's a real sub-word or exact word, not a random collision
                 labels[i] = label_id;
             }
         }

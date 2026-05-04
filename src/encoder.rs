@@ -13,7 +13,13 @@ pub struct EmbeddingEncoder {
 
 impl EmbeddingEncoder {
     pub fn new(model_id: &str) -> Result<Self> {
-        let device = Device::Cpu;
+        let device = if candle_core::utils::cuda_is_available() {
+            Device::new_cuda(0).unwrap_or(Device::Cpu)
+        } else if candle_core::utils::metal_is_available() {
+            Device::new_metal(0).unwrap_or(Device::Cpu)
+        } else {
+            Device::Cpu
+        };
 
         let api = Api::new()?;
         let repo = api.repo(Repo::model(model_id.to_string()));
@@ -39,10 +45,8 @@ impl EmbeddingEncoder {
     }
 
     /// Encode full text into a single summary vector (Mean Pooling)
-    /// E5 model requires "query: " prefix for tasks.
     pub fn encode(&self, text: &str) -> Result<Tensor> {
-        let prefixed = format!("query: {}", text);
-        let (embeddings, mask) = self.get_hidden_states_with_mask(&prefixed)?;
+        let (embeddings, mask) = self.get_hidden_states_with_mask(text)?;
 
         // Correct Mean Pooling: Only average non-padding tokens
         let mask_f32 = mask.to_dtype(DType::F32)?;
@@ -61,9 +65,16 @@ impl EmbeddingEncoder {
     }
 
     pub fn get_hidden_states_with_mask(&self, text: &str) -> Result<(Tensor, Tensor)> {
+        // E5 model requires "query: " prefix for tasks.
+        let prefixed = if text.starts_with("query: ") {
+            text.to_string()
+        } else {
+            format!("query: {}", text)
+        };
+
         let tokens = self
             .tokenizer
-            .encode(text, true)
+            .encode(prefixed, true)
             .map_err(|e| anyhow!("Tokenization error: {}", e))?;
 
         let token_ids = Tensor::new(tokens.get_ids(), &self.device)?.unsqueeze(0)?;
@@ -78,11 +89,72 @@ impl EmbeddingEncoder {
     }
 
     pub fn get_tokens(&self, text: &str) -> Result<Vec<String>> {
+        let prefixed = if text.starts_with("query: ") {
+            text.to_string()
+        } else {
+            format!("query: {}", text)
+        };
         let tokens = self
             .tokenizer
-            .encode(text, true)
+            .encode(prefixed, true)
             .map_err(|e| anyhow!("Tokenization error: {}", e))?;
         Ok(tokens.get_tokens().to_vec())
+    }
+
+    /// Optimized batch encoding
+    pub fn encode_batch(&self, texts: &[String]) -> Result<Tensor> {
+        let prefixed: Vec<String> = texts
+            .iter()
+            .map(|t| {
+                if t.starts_with("query: ") {
+                    t.clone()
+                } else {
+                    format!("query: {}", t)
+                }
+            })
+            .collect();
+
+        let tokens = self
+            .tokenizer
+            .encode_batch(prefixed, true)
+            .map_err(|e| anyhow!("Batch tokenization error: {}", e))?;
+
+        let token_ids = tokens
+            .iter()
+            .map(|t| Tensor::new(t.get_ids(), &self.device))
+            .collect::<candle_core::Result<Vec<_>>>()?;
+        let token_ids = Tensor::stack(&token_ids, 0)?;
+
+        let attention_mask = tokens
+            .iter()
+            .map(|t| Tensor::new(t.get_attention_mask(), &self.device))
+            .collect::<candle_core::Result<Vec<_>>>()?;
+        let attention_mask = Tensor::stack(&attention_mask, 0)?;
+
+        let token_type_ids = tokens
+            .iter()
+            .map(|t| Tensor::new(t.get_type_ids(), &self.device))
+            .collect::<candle_core::Result<Vec<_>>>()?;
+        let token_type_ids = Tensor::stack(&token_type_ids, 0)?;
+
+        let embeddings =
+            self.model
+                .forward(&token_ids, &token_type_ids, Some(&attention_mask))?;
+
+        // Mean pooling for batch
+        let mask_f32 = attention_mask.to_dtype(DType::F32)?;
+        let sum_embeddings = embeddings.broadcast_mul(&mask_f32.unsqueeze(2)?)?.sum(1)?;
+        let sum_mask = mask_f32.sum(1)?.to_dtype(DType::F32)?;
+        let mean_pooled = sum_embeddings.broadcast_div(&sum_mask.unsqueeze(1)?)?;
+
+        // Normalize
+        let norms = mean_pooled
+            .sqr()?
+            .sum(1)?
+            .sqrt()?
+            .unsqueeze(1)?
+            .broadcast_add(&Tensor::new(1e-9f32, &self.device)?)?;
+        Ok(mean_pooled.broadcast_div(&norms)?)
     }
 
     pub fn get_tokenizer(&self) -> &Tokenizer {

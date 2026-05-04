@@ -1,99 +1,152 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
 use deterministic_ai_agent::AgentEngine;
 use deterministic_ai_agent::encoder::EmbeddingEncoder;
-use deterministic_ai_agent::model::IntentClassifier;
+use deterministic_ai_agent::model::{IntentClassifier, NERClassifier};
 use deterministic_ai_agent::ner::NERExtractor;
 use deterministic_ai_agent::train::Trainer;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
-#[derive(Deserialize)]
-struct TrainingSample {
+#[derive(Debug, Deserialize)]
+struct TrainingItem {
     input: String,
     intent_id: u32,
+    parameters: HashMap<String, serde_json::Value>,
 }
 
 fn main() -> Result<()> {
+    let device = Device::Cpu;
+    let model_dir = "models";
+    fs::create_dir_all(model_dir)?;
+
     // 1. Initialize Encoder
-    println!("Loading Multilingual Encoder...");
-    let encoder = EmbeddingEncoder::new("intfloat/multilingual-e5-small")?;
+    println!("--- Step 1: Initialize Encoder ---");
+    let encoder = std::sync::Arc::new(EmbeddingEncoder::new("intfloat/multilingual-e5-small")?);
     let dim = 384;
 
-    // 2. Load Training Data
-    println!("Loading training data from sample_data.json...");
-    let data_content = std::fs::read_to_string("data/sample_data.json")?;
-    let samples: Vec<TrainingSample> = serde_json::from_str(&data_content)?;
+    // 2. Load Data
+    println!("\n--- Step 2: Load Training Data ---");
+    let data_path = "data/sample_data.json";
+    let content = fs::read_to_string(data_path)
+        .with_context(|| format!("Failed to read {}", data_path))?;
+    let items: Vec<TrainingItem> = serde_json::from_str(&content)?;
+    println!("Loaded {} training items.", items.len());
 
-    let train_texts: Vec<String> = samples.iter().map(|s| s.input.clone()).collect();
-    let train_labels_vec: Vec<u32> = samples.iter().map(|s| s.intent_id).collect();
-    let num_intents = (train_labels_vec.iter().max().unwrap_or(&0) + 1) as usize;
-
-    // 3. Initialize Classifier
-    println!("Initializing Classifier for {} intents...", num_intents);
-    let mut classifier = IntentClassifier::new(dim, num_intents)?;
+    // 3. Train Intent Classifier
+    println!("\n--- Step 3: Training Intent Classifier ---");
+    let mut intent_embeddings = Vec::new();
+    let mut intent_labels_vec = Vec::new();
+    for item in &items {
+        intent_embeddings.push(encoder.encode(&item.input)?);
+        intent_labels_vec.push(item.intent_id);
+    }
+    let train_embeddings = Tensor::stack(&intent_embeddings, 0)?;
+    let train_labels = Tensor::from_vec(intent_labels_vec.clone(), (items.len(),), &device)?;
+    
+    let num_intents = (intent_labels_vec.iter().max().unwrap_or(&0) + 1) as usize;
+    let mut intent_classifier = IntentClassifier::new(dim, num_intents)?;
     let trainer = Trainer::new();
 
-    // 4. Encode Training Data
-    println!("Encoding training samples...");
-    let embs: Vec<Tensor> = train_texts
-        .iter()
-        .map(|t| encoder.encode(t))
-        .collect::<Result<Vec<_>>>()?;
-    let train_embeddings = Tensor::stack(&embs, 0)?;
-    let train_labels = Tensor::from_vec(train_labels_vec.clone(), (samples.len(),), &Device::Cpu)?;
+    trainer.train_intent(&mut intent_classifier, &train_embeddings, &train_labels, 200, 0.01)?;
 
-    // 5. Training
-    println!("Training Intent Classifier...");
-    trainer.train_intent(
-        &mut classifier,
-        &train_embeddings,
-        &train_labels,
-        100,
-        0.001,
-    )?;
+    // Save Intent Weights & Centroids
+    let intent_weights_path = format!("{}/intent_classifier.safetensors", model_dir);
+    intent_classifier.varmap().save(&intent_weights_path)?;
+    
+    let centroids = trainer.calculate_centroids(&train_embeddings, &intent_labels_vec, num_intents)?;
+    intent_classifier.set_centroids(centroids.clone());
+    
+    let centroid_path = format!("{}/centroids.safetensors", model_dir);
+    let mut cmap = HashMap::new();
+    cmap.insert("centroids".to_string(), centroids);
+    candle_core::safetensors::save(&cmap, &centroid_path)?;
+    println!("Intent Training completed and saved.");
 
-    // 6. Update Centroids for OOD detection
-    let centroids =
-        trainer.calculate_centroids(&train_embeddings, &train_labels_vec, num_intents)?;
-    classifier.set_centroids(centroids);
+    // 4. Train NER Classifier
+    println!("\n--- Step 4: Training NER Classifier ---");
+    let max_seq_len = 128;
+    let mut ner_embeddings = Vec::new();
+    let mut ner_labels = Vec::new();
 
-    // 7. Initialize Engine
-    println!("Loading NER and Engine...");
-    let mut ner = NERExtractor::new(dim, 0.85)?;
+    for item in &items {
+        let tokens = encoder.get_tokens(&item.input)?;
+        let labels = deterministic_ai_agent::ner::align_labels_with_tokens(&tokens, &item.parameters);
+        let hidden_states = encoder.get_hidden_states(&item.input)?;
 
-    let device_config: serde_yaml::Value =
-        serde_yaml::from_str(&std::fs::read_to_string("config/devices.yaml")?)?;
-    if let Some(devices) = device_config.get("devices").and_then(|d| d.as_sequence()) {
-        for device_val in devices {
-            if let Some(device_name) = device_val.as_str() {
-                ner.register_device(device_name, &encoder)?;
+        let (seq_len, d) = hidden_states.dims2()?;
+        if seq_len > max_seq_len { continue; }
+
+        let pad_len = max_seq_len - seq_len;
+        let padded_emb = if pad_len > 0 {
+            let padding = Tensor::zeros((pad_len, d), hidden_states.dtype(), &device)?;
+            Tensor::cat(&[&hidden_states, &padding], 0)?
+        } else {
+            hidden_states
+        };
+
+        let mut padded_labels = labels;
+        padded_labels.resize(max_seq_len, 0);
+
+        ner_embeddings.push(padded_emb);
+        ner_labels.push(Tensor::new(padded_labels.as_slice(), &device)?);
+    }
+
+    let ner_emb_tensor = Tensor::stack(&ner_embeddings, 0)?;
+    let ner_lab_tensor = Tensor::stack(&ner_labels, 0)?;
+    let mut ner_classifier = NERClassifier::new(dim, 3)?; // O, DEVICE, FAULT
+
+    trainer.train_ner(&mut ner_classifier, &ner_emb_tensor, &ner_lab_tensor, 200, 0.01)?;
+    
+    let ner_weights_path = format!("{}/ner_classifier.safetensors", model_dir);
+    ner_classifier.varmap().save(&ner_weights_path)?;
+    println!("NER Training completed and saved.");
+
+    // 5. Initialize Engine and Run Inference
+    println!("\n--- Step 5: Initializing Agent Engine ---");
+    let mut ner_extractor = NERExtractor::new(dim, 0.85)?;
+    ner_extractor.load_classifier(&ner_weights_path)?;
+
+    // Register devices from config
+    let devices_config_path = "config/devices.yaml";
+    if Path::new(devices_config_path).exists() {
+        let device_config: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(devices_config_path)?)?;
+        if let Some(devices) = device_config.get("devices").and_then(|d| d.as_sequence()) {
+            for device_val in devices {
+                if let Some(device_name) = device_val.as_str() {
+                    ner_extractor.register_device(device_name, &encoder)?;
+                }
             }
         }
     }
 
-    let engine = AgentEngine::new(encoder, classifier, ner, Some("config/agent_settings.yaml"))?;
+    let engine = AgentEngine::new(
+        encoder, 
+        intent_classifier, 
+        ner_extractor, 
+        Some("config/agent_settings.yaml")
+    )?;
 
-    // 8. Run inference
+    // 6. Final Demo Inference
     let test_inputs = vec![
         "Warning: The Motor_B on line 5 show excessive vibration",
         "Conveyor_A のベルト異常振動を検出。診断を実行してください。",
         "What is the weather today?",
     ];
 
+    println!("\n--- Final Demo ---");
     for input in test_inputs {
-        println!("\n--- Inference ---");
-        println!("Input: '{}'", input);
         let result = engine.run_step(input)?;
-        println!("Result Status: {}", result.status);
-        if let Some(reason) = result.reason {
-            println!("Reason: {}", reason);
-        }
-        println!(
-            "Intent ID: {}, Confidence: {:.4}, Similarity: {:.4}",
-            result.intent_id, result.confidence, result.in_dist_similarity
-        );
+        println!("\nInput: '{}'", input);
+        println!("  Intent ID: {}, Confidence: {:.4}", result.intent_id, result.confidence);
+        println!("  Status: {}", result.status);
         if !result.parameters.is_empty() {
-            println!("Params: {:?}", result.parameters);
+            println!("  Entities: {:?}", result.parameters);
+        }
+        if let Some(reason) = result.reason {
+            println!("  Note: {}", reason);
         }
     }
 

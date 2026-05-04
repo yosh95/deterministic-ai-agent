@@ -6,9 +6,25 @@ pub mod train;
 use crate::encoder::EmbeddingEncoder;
 use crate::model::IntentClassifier;
 use crate::ner::ModelNER;
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentError {
+    #[error("Model error: {0}")]
+    ModelError(String),
+    #[error("Candle error: {0}")]
+    CandleError(#[from] candle_core::Error),
+    #[error("Config error: {0}")]
+    ConfigError(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Anyhow error: {0}")]
+    Other(#[from] anyhow::Error),
+}
+
+pub type Result<T> = std::result::Result<T, AgentError>;
 
 #[derive(Debug, Deserialize)]
 struct EngineConfig {
@@ -38,7 +54,7 @@ pub struct AgentResult {
 }
 
 pub struct AgentEngine {
-    encoder: EmbeddingEncoder,
+    encoder: Arc<EmbeddingEncoder>,
     classifier: IntentClassifier,
     ner: ModelNER,
     confidence_threshold: f32,
@@ -47,7 +63,7 @@ pub struct AgentEngine {
 
 impl AgentEngine {
     pub fn new(
-        encoder: EmbeddingEncoder,
+        encoder: Arc<EmbeddingEncoder>,
         classifier: IntentClassifier,
         ner: ModelNER,
         config_path: Option<&str>,
@@ -57,9 +73,9 @@ impl AgentEngine {
 
         if let Some(path) = config_path {
             let content = std::fs::read_to_string(path)
-                .map_err(|e| anyhow!("Failed to read config file at {}: {}", path, e))?;
+                .map_err(|e| AgentError::ConfigError(format!("Failed to read config: {}", e)))?;
             let config: EngineConfig = serde_yaml::from_str(&content)
-                .map_err(|e| anyhow!("Failed to parse config YAML: {}", e))?;
+                .map_err(|e| AgentError::ConfigError(format!("Failed to parse YAML: {}", e)))?;
 
             confidence_threshold = config.engine.thresholds.confidence;
             ood_threshold = config.engine.thresholds.ood;
