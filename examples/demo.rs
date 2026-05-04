@@ -7,7 +7,7 @@ fn main() -> Result<()> {
     println!("Initializing encoder...");
     let model_id = "sentence-transformers/all-MiniLM-L6-v2";
     let encoder = EmbeddingEncoder::new(model_id)?;
-    let hidden_dim = 384; 
+    let hidden_dim = 384;
 
     // 2. Initialize Model-based NER (lowered threshold significantly for raw embedding demo)
     println!("Initializing Model-based NER...");

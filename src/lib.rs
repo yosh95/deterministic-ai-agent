@@ -3,12 +3,12 @@ pub mod model;
 pub mod ner;
 pub mod train;
 
-use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use crate::encoder::EmbeddingEncoder;
 use crate::model::IntentClassifier;
 use crate::ner::ModelNER;
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 struct EngineConfig {
@@ -60,7 +60,7 @@ impl AgentEngine {
                 .map_err(|e| anyhow!("Failed to read config file at {}: {}", path, e))?;
             let config: EngineConfig = serde_yaml::from_str(&content)
                 .map_err(|e| anyhow!("Failed to parse config YAML: {}", e))?;
-            
+
             confidence_threshold = config.engine.thresholds.confidence;
             ood_threshold = config.engine.thresholds.ood;
         }

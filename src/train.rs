@@ -1,5 +1,5 @@
-use candle_core::{DType, Result, Tensor, Module};
-use candle_nn::{Linear, Optimizer, VarBuilder, VarMap, ops, linear};
+use candle_core::{DType, Module, Result, Tensor};
+use candle_nn::{Linear, Optimizer, VarBuilder, VarMap, linear, ops};
 
 pub struct IntentClassifierModel {
     fc1: Linear,
@@ -39,6 +39,12 @@ pub struct Trainer {
     varmap: VarMap,
 }
 
+impl Default for Trainer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Trainer {
     pub fn new() -> Self {
         Self {
@@ -57,7 +63,7 @@ impl Trainer {
         let device = token_embeddings.device();
         let vs = VarBuilder::from_varmap(&self.varmap, DType::F32, device);
         let (n, seq_len, dim) = token_embeddings.dims3()?;
-        
+
         let model = NERClassifierModel::new(vs, dim, num_labels)?;
         let mut opt = candle_nn::AdamW::new_lr(self.varmap.all_vars(), learning_rate)?;
 
@@ -69,11 +75,15 @@ impl Trainer {
             let logits = model.forward(&x_flat)?;
             let log_sm = ops::log_softmax(&logits, 1)?;
             let loss = candle_nn::loss::nll(&log_sm, &y_flat)?;
-            
+
             opt.backward_step(&loss)?;
 
             if epoch % 20 == 0 || epoch == 1 {
-                println!("NER Epoch: {:>3}, Loss: {:.4}", epoch, loss.to_vec0::<f32>()?);
+                println!(
+                    "NER Epoch: {:>3}, Loss: {:.4}",
+                    epoch,
+                    loss.to_vec0::<f32>()?
+                );
             }
         }
         Ok(())
@@ -90,7 +100,7 @@ impl Trainer {
         let device = embeddings.device();
         let vs = VarBuilder::from_varmap(&self.varmap, DType::F32, device);
         let input_dim = embeddings.dims()[1];
-        
+
         let model = IntentClassifierModel::new(vs, input_dim, num_classes)?;
         let mut opt = candle_nn::AdamW::new_lr(self.varmap.all_vars(), learning_rate)?;
 
@@ -98,7 +108,7 @@ impl Trainer {
             let logits = model.forward(embeddings)?;
             let log_sm = ops::log_softmax(&logits, 1)?;
             let loss = candle_nn::loss::nll(&log_sm, labels)?;
-            
+
             opt.backward_step(&loss)?;
 
             if epoch % 20 == 0 || epoch == 1 {
@@ -112,34 +122,44 @@ impl Trainer {
         self.varmap.save(path)
     }
 
-    pub fn get_centroids(&self, embeddings: &Tensor, labels_vec: &[u32], num_classes: usize) -> Result<Tensor> {
-        let (num_samples, dim) = embeddings.dims2()?;
+    pub fn get_centroids(
+        &self,
+        embeddings: &Tensor,
+        labels_vec: &[u32],
+        num_classes: usize,
+    ) -> Result<Tensor> {
+        let (_num_samples, dim) = embeddings.dims2()?;
         let mut centroid_data = Vec::with_capacity(num_classes * dim);
-        
+
         for class_idx in 0..num_classes {
             let mut count = 0.0f32;
             let mut sum = vec![0.0f32; dim];
-            
+
             for (i, &l) in labels_vec.iter().enumerate() {
                 if l as usize == class_idx {
                     let row = embeddings.get(i)?.to_vec1::<f32>()?;
-                    for j in 0..dim {
-                        sum[j] += row[j];
+                    for (s, &r) in sum.iter_mut().zip(row.iter()) {
+                        *s += r;
                     }
                     count += 1.0;
                 }
             }
-            
+
             if count > 0.0 {
-                for j in 0..dim {
-                    sum[j] /= count;
+                for s in sum.iter_mut() {
+                    *s /= count;
+                }
+                // Normalize centroid
+                let norm = sum.iter().map(|v| v * v).sum::<f32>().sqrt() + 1e-9;
+                for s in sum.iter_mut() {
+                    *s /= norm;
                 }
                 centroid_data.extend(sum);
             } else {
                 centroid_data.extend(vec![0.0f32; dim]);
             }
         }
-        
+
         Tensor::from_vec(centroid_data, (num_classes, dim), embeddings.device())
     }
 }

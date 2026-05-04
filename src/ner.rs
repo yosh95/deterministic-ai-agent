@@ -1,7 +1,9 @@
+use crate::encoder::EmbeddingEncoder;
+use crate::model::{MasterMatcher, TokenClassifier};
 use anyhow::Result;
 use std::collections::HashMap;
-use crate::model::{TokenClassifier, MasterMatcher};
-use crate::encoder::EmbeddingEncoder;
+
+pub type NERExtractor = ModelNER;
 
 pub struct ModelNER {
     classifier: TokenClassifier,
@@ -27,15 +29,22 @@ impl ModelNER {
         Ok(())
     }
 
-    pub fn extract(&self, text: &str, encoder: &EmbeddingEncoder) -> Result<HashMap<String, String>> {
-        let hidden_states = encoder.get_hidden_states(text)?;
+    pub fn extract(
+        &self,
+        text: &str,
+        encoder: &EmbeddingEncoder,
+    ) -> Result<HashMap<String, String>> {
+        let prefixed = format!("query: {}", text);
+        let (hidden_states, _) = encoder.get_hidden_states_with_mask(&prefixed)?;
         let logits = self.classifier.forward(&hidden_states)?;
         let probs = candle_nn::ops::softmax(&logits, 1)?;
         let labels_tensor = probs.argmax(1)?;
         let labels: Vec<u32> = labels_tensor.to_vec1()?;
 
         let tokenizer = encoder.get_tokenizer();
-        let tokens = tokenizer.encode(text, true).map_err(|e| anyhow::anyhow!(e))?;
+        let tokens = tokenizer
+            .encode(text, true)
+            .map_err(|e| anyhow::anyhow!(e))?;
         let token_ids = tokens.get_ids();
         let token_strings = tokens.get_tokens();
 
@@ -44,15 +53,17 @@ impl ModelNER {
         let mut fault_chunks = Vec::new();
 
         for (i, &label_id) in labels.iter().enumerate() {
-            if i >= token_strings.len() { break; }
+            if i >= token_strings.len() {
+                break;
+            }
             let token_str = &token_strings[i];
-            
+
             // Skip special tokens
             if (token_str.starts_with('[') && token_str.ends_with(']')) || token_ids[i] <= 103 {
                 continue;
             }
 
-            // High-priority Deterministic Match (RAG logic)
+            // High-priority Deterministic Match (Normalized similarity)
             let token_vec = hidden_states.get(i)?;
             if let Some((matched_id, _score)) = self.matcher.match_entity(&token_vec)? {
                 results.insert("device_id".to_string(), matched_id);
@@ -70,8 +81,8 @@ impl ModelNER {
         let reconstruct = |chunks: Vec<String>| -> String {
             let mut result = String::new();
             for chunk in chunks {
-                if chunk.starts_with("##") {
-                    result.push_str(&chunk[2..]);
+                if let Some(stripped) = chunk.strip_prefix("##") {
+                    result.push_str(stripped);
                 } else {
                     if !result.is_empty() {
                         result.push(' ');

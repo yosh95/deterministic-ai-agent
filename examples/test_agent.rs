@@ -1,27 +1,27 @@
 use anyhow::Result;
+use deterministic_ai_agent::AgentEngine;
 use deterministic_ai_agent::encoder::EmbeddingEncoder;
 use deterministic_ai_agent::model::IntentClassifier;
 use deterministic_ai_agent::ner::ModelNER;
-use deterministic_ai_agent::AgentEngine;
 
 fn main() -> Result<()> {
     // 1. Initialize Encoder
     println!("Initializing encoder...");
     let model_id = "sentence-transformers/all-MiniLM-L6-v2";
     let encoder = EmbeddingEncoder::new(model_id)?;
-    let hidden_dim = 384; 
+    let hidden_dim = 384;
 
     // 2. Initialize Classifiers
     println!("Initializing classifiers...");
     let mut intent_classifier = IntentClassifier::new(hidden_dim, 3)?;
-    
+
     // Load trained weights if available
     let weights_path = "models/intent_classifier.safetensors";
     let centroid_path = "models/centroids.safetensors";
     if std::path::Path::new(weights_path).exists() {
         println!("Loading trained weights from {}...", weights_path);
         intent_classifier.load_weights(weights_path)?;
-        
+
         if std::path::Path::new(centroid_path).exists() {
             println!("Loading centroids for OOD detection...");
             let device = candle_core::Device::Cpu;
@@ -36,7 +36,7 @@ fn main() -> Result<()> {
 
     // 3. Initialize NER
     let mut ner = ModelNER::new(hidden_dim, 0.6)?;
-    
+
     // Load trained NER weights if available
     let ner_weights_path = "models/ner_classifier.safetensors";
     if std::path::Path::new(ner_weights_path).exists() {
@@ -63,7 +63,10 @@ fn main() -> Result<()> {
     for input in test_inputs {
         let result = engine.run_step(input)?;
         println!("\nInput: {}", result.input);
-        println!("Intent ID: {} (Confidence: {:.2})", result.intent_id, result.confidence);
+        println!(
+            "Intent ID: {} (Confidence: {:.2})",
+            result.intent_id, result.confidence
+        );
         println!("Status: {}", result.status);
         if !result.parameters.is_empty() {
             println!("Params: {:?}", result.parameters);
